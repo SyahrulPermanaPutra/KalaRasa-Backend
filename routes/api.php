@@ -16,8 +16,15 @@ use App\Http\Controllers\Api\Admin\AdminDashboardController;
 */
 
 // Public Routes
+Route::prefix('recipe')->group(function () {
+    Route::get('/', [ResepController::class, 'index']);
+    Route::get('/{id}', [ResepController::class, 'show']);
+});
+
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+
+
 
 // Protected Routes (User & Admin)
 Route::middleware('auth:sanctum')->group(function () {
@@ -25,7 +32,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auth Routes
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
-    Route::put('/profile', [AuthController::class, 'updateProfile']);
+    Route::post('/profile', [AuthController::class, 'updateProfile']);
 
     // Shopping List Routes
     Route::prefix('shopping-lists')->group(function () {
@@ -53,9 +60,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Resep Routes (User)
-    Route::prefix('reseps')->group(function () {
-        Route::get('/', [ResepController::class, 'index']);
-        Route::get('/{id}', [ResepController::class, 'show']);
+    Route::prefix('recipe')->group(function () {
         Route::post('/{id}/add-to-shopping-list', [ResepController::class, 'addToShoppingList']);
         Route::post('/{id}/toggle-favorite', [ResepController::class, 'toggleFavorite']);
         Route::get('/my/favorites', [ResepController::class, 'myFavorites']);
@@ -68,11 +73,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
         Route::get('/dashboard/users', [AdminDashboardController::class, 'users']);
         Route::get('/dashboard/users/{id}', [AdminDashboardController::class, 'userDetail']);
-        Route::get('/dashboard/resep-statistics', [AdminDashboardController::class, 'resepStatistics']);
+        Route::get('/dashboard/resep-statistics', [AdminDashboardController::class, 'recipetatistics']);
         Route::get('/dashboard/expense-statistics', [AdminDashboardController::class, 'expenseStatistics']);
 
         // Resep Management
-        Route::prefix('reseps')->group(function () {
+        Route::prefix('recipe')->group(function () {
             Route::get('/', [AdminResepController::class, 'index']);
             Route::post('/', [AdminResepController::class, 'store']);
             Route::get('/statistics', [AdminResepController::class, 'statistics']);

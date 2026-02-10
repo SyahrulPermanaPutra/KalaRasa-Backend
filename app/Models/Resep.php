@@ -9,6 +9,8 @@ class Resep extends Model
 {
     use HasFactory;
 
+    protected $table = 'recipes';
+
     protected $fillable = [
         'nama_resep',
         'deskripsi',

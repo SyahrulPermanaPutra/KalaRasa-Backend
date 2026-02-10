@@ -19,6 +19,8 @@ class AuthController extends Controller
             'password' => 'required|string|min:6|confirmed',
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
+            'gender' => 'nullable|in:L,P',
+            'birth_date' => 'nullable|date',
         ]);
 
         $user = User::create([
@@ -27,6 +29,8 @@ class AuthController extends Controller
             'password' => Hash::make($request->password),
             'phone' => $request->phone,
             'address' => $request->address,
+            'gender' => $request->gender,
+            'birth_date' => $request->birth_date,
             'role' => 'user',
         ]);
 
@@ -99,6 +103,8 @@ class AuthController extends Controller
             'phone' => 'nullable|string|max:20',
             'address' => 'nullable|string',
             'avatar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
+            'gender' => 'nullable|in:L,P',
+            'birth_date' => 'nullable|date',
         ]);
 
         $user->name = $request->name;
