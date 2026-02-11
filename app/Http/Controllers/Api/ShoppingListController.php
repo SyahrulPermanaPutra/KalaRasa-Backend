@@ -3,183 +3,451 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\ShoppingList;
 use App\Models\Expense;
+use App\Models\Ingredient;
+use App\Models\Resep;
+use App\Models\ShoppingList;
+use App\Models\ShoppingListItem;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 
 class ShoppingListController extends Controller
 {
+    // ──────────────────────────────────────────────────────────
+    // GRAFIK PENGELUARAN
+    // ──────────────────────────────────────────────────────────
+
+    /**
+     * GET /api/shopping-lists/grafik/harian
+     * Data pengeluaran 7 hari terakhir
+     */
+    public function grafikHarian(Request $request)
+    {
+        $user  = $request->user();
+        $today = Carbon::today();
+
+        // Ambil data 7 hari terakhir
+        $data = collect(range(6, 0))->map(function ($daysAgo) use ($user, $today) {
+            $date = $today->copy()->subDays($daysAgo);
+
+            $total = Expense::where('user_id', $user->id)
+                ->whereDate('purchase_date', $date)
+                ->sum('actual_price');
+
+            return [
+                'label'  => $date->translatedFormat('D, d M'),   // Mis: "Sen, 03 Feb"
+                'date'   => $date->format('Y-m-d'),
+                'total'  => (float) $total,
+            ];
+        });
+
+        $avg = $data->avg('total');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Grafik harian berhasil diambil',
+            'data'    => [
+                'periode'        => '7 hari terakhir',
+                'rata_rata'      => round($avg, 2),
+                'total_periode'  => $data->sum('total'),
+                'grafik'         => $data->values(),
+            ]
+        ]);
+    }
+
+    /**
+     * GET /api/shopping-lists/grafik/mingguan
+     * Data pengeluaran 4 minggu terakhir
+     */
+    public function grafikMingguan(Request $request)
+    {
+        $user  = $request->user();
+        $today = Carbon::today();
+
+        $data = collect(range(3, 0))->map(function ($weeksAgo) use ($user, $today) {
+            $startOfWeek = $today->copy()->subWeeks($weeksAgo)->startOfWeek();
+            $endOfWeek   = $startOfWeek->copy()->endOfWeek();
+
+            $total = Expense::where('user_id', $user->id)
+                ->whereBetween('purchase_date', [$startOfWeek, $endOfWeek])
+                ->sum('actual_price');
+
+            return [
+                'label'       => 'Minggu ' . $startOfWeek->format('d M'),
+                'start_date'  => $startOfWeek->format('Y-m-d'),
+                'end_date'    => $endOfWeek->format('Y-m-d'),
+                'total'       => (float) $total,
+            ];
+        });
+
+        $avg = $data->avg('total');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Grafik mingguan berhasil diambil',
+            'data'    => [
+                'periode'       => '4 minggu terakhir',
+                'rata_rata'     => round($avg, 2),
+                'total_periode' => $data->sum('total'),
+                'grafik'        => $data->values(),
+            ]
+        ]);
+    }
+
+    /**
+     * GET /api/shopping-lists/grafik/bulanan
+     * Data pengeluaran 12 bulan terakhir
+     */
+    public function grafikBulanan(Request $request)
+    {
+        $user  = $request->user();
+        $today = Carbon::today();
+
+        $data = collect(range(11, 0))->map(function ($monthsAgo) use ($user, $today) {
+            $month = $today->copy()->subMonths($monthsAgo);
+
+            $total = Expense::where('user_id', $user->id)
+                ->whereYear('purchase_date', $month->year)
+                ->whereMonth('purchase_date', $month->month)
+                ->sum('actual_price');
+
+            return [
+                'label'  => $month->translatedFormat('M Y'),   // Mis: "Jan 2025"
+                'month'  => $month->format('Y-m'),
+                'total'  => (float) $total,
+            ];
+        });
+
+        $avg = $data->avg('total');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Grafik bulanan berhasil diambil',
+            'data'    => [
+                'periode'       => '12 bulan terakhir',
+                'rata_rata'     => round($avg, 2),
+                'total_periode' => $data->sum('total'),
+                'grafik'        => $data->values(),
+            ]
+        ]);
+    }
+
+    // ──────────────────────────────────────────────────────────
+    // MEMO / SHOPPING LIST CRUD
+    // ──────────────────────────────────────────────────────────
+
+    /**
+     * GET /api/shopping-lists
+     * History semua memo milik user
+     */
     public function index(Request $request)
     {
-        $query = $request->user()->shoppingLists();
+        $query = ShoppingList::where('user_id', $request->user()->id)
+            ->with([
+                'recipe:id,nama_resep,gambar',
+                'items',
+            ])
+            ->orderBy('created_at', 'desc');
 
-        // Filter berdasarkan status
+        // Filter by status
         if ($request->has('status')) {
-            if ($request->status === 'belum_dibeli') {
-                $query->belumDibeli();
-            } elseif ($request->status === 'sudah_dibeli') {
-                $query->sudahDibeli();
-            }
+            $query->where('status', $request->status);
         }
 
-        // Filter berdasarkan kategori
-        if ($request->has('kategori')) {
-            $query->where('kategori', $request->kategori);
+        // Filter by tanggal
+        if ($request->has('bulan') && $request->has('tahun')) {
+            $query->whereMonth('shopping_date', $request->bulan)
+                  ->whereYear('shopping_date', $request->tahun);
         }
 
-        $shoppingLists = $query->orderBy('created_at', 'desc')->get();
+        $lists = $query->paginate($request->input('per_page', 10));
 
-        // Hitung total
-        $totalHarga = $shoppingLists->sum('harga');
-        $totalItem = $shoppingLists->count();
-        $sudahDibeli = $shoppingLists->where('sudah_dibeli', true)->count();
+        // Tambahkan summary di setiap item
+        $lists->getCollection()->transform(function ($list) {
+            $list->total_items     = $list->items->count();
+            $list->purchased_items = $list->items->where('is_purchased', true)->count();
+            $list->progress        = $list->total_items > 0
+                ? round(($list->purchased_items / $list->total_items) * 100)
+                : 0;
+            unset($list->items); // Hapus items dari list (hanya summary)
+            return $list;
+        });
 
         return response()->json([
             'success' => true,
-            'data' => [
-                'items' => $shoppingLists,
-                'summary' => [
-                    'total_items' => $totalItem,
-                    'items_dibeli' => $sudahDibeli,
-                    'items_belum_dibeli' => $totalItem - $sudahDibeli,
-                    'total_harga' => $totalHarga,
-                ]
-            ]
+            'message' => 'History memo berhasil diambil',
+            'data'    => $lists,
         ]);
     }
 
+    /**
+     * POST /api/shopping-lists
+     * Buat memo baru secara manual
+     */
     public function store(Request $request)
     {
-        $request->validate([
-            'nama_item' => 'required|string|max:255',
-            'jumlah' => 'required|integer|min:1',
-            'satuan' => 'required|string|max:50',
-            'harga' => 'nullable|numeric|min:0',
-            'kategori' => 'nullable|string|max:100',
-            'catatan' => 'nullable|string',
+        $validator = Validator::make($request->all(), [
+            'nama_list'     => 'required|string|max:255',
+            'shopping_date' => 'nullable|date',
+            'catatan'       => 'nullable|string',
+            'items'         => 'nullable|array',
+            'items.*.nama_item'       => 'required_with:items|string|max:255',
+            'items.*.jumlah'          => 'required_with:items|numeric|min:0',
+            'items.*.satuan'          => 'required_with:items|string|max:50',
+            'items.*.estimated_price' => 'nullable|numeric|min:0',
+            'items.*.catatan'         => 'nullable|string',
         ]);
 
-        $shoppingList = $request->user()->shoppingLists()->create($request->all());
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Item berhasil ditambahkan ke daftar belanja',
-            'data' => $shoppingList
-        ], 201);
+        DB::beginTransaction();
+        try {
+            // Buat shopping list / memo
+            $list = ShoppingList::create([
+                'user_id'       => $request->user()->id,
+                'nama_list'     => $request->nama_list,
+                'shopping_date' => $request->shopping_date,
+                'catatan'       => $request->catatan,
+                'status'        => 'pending',
+            ]);
+
+            // Tambahkan items jika ada
+            if ($request->has('items')) {
+                foreach ($request->items as $item) {
+                    ShoppingListItem::create([
+                        'shopping_list_id' => $list->id,
+                        'nama_item'        => $item['nama_item'],
+                        'jumlah'           => $item['jumlah'],
+                        'satuan'           => $item['satuan'],
+                        'estimated_price'  => $item['estimated_price'] ?? 0,
+                        'catatan'          => $item['catatan'] ?? null,
+                    ]);
+                }
+            }
+
+            // Hitung total estimasi
+            $list->recalculateTotals();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Memo berhasil dibuat',
+                'data'    => $list->load('items'),
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat memo: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
-    public function show($id)
+    /**
+     * POST /api/shopping-lists/from-recipe/{id}
+     * Buat memo dari resep (auto-fill bahan)
+     */
+    public function storeFromRecipe(Request $request, $recipeId)
     {
-        $shoppingList = ShoppingList::where('user_id', auth()->id())
+        $validator = Validator::make($request->all(), [
+            'nama_list'     => 'nullable|string|max:255',
+            'shopping_date' => 'nullable|date',
+            'catatan'       => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+
+        $resep = Resep::approved()
+            ->with('ingredients')
+            ->findOrFail($recipeId);
+
+        DB::beginTransaction();
+        try {
+            // Buat shopping list dari resep
+            $list = ShoppingList::create([
+                'user_id'       => $request->user()->id,
+                'recipe_id'     => $resep->id,
+                'nama_list'     => $request->nama_list ?? 'Belanja - ' . $resep->nama_resep,
+                'shopping_date' => $request->shopping_date ?? now()->format('Y-m-d'),
+                'catatan'       => $request->catatan,
+                'status'        => 'pending',
+            ]);
+
+            // Auto-fill items dari bahan resep
+            if ($resep->ingredients->count() > 0) {
+                // Jika relasi ingredients ada
+                foreach ($resep->ingredients as $ingredient) {
+                    ShoppingListItem::create([
+                        'shopping_list_id' => $list->id,
+                        'ingredient_id'    => $ingredient->id,
+                        'nama_item'        => $ingredient->nama,
+                        'jumlah'           => $ingredient->pivot->jumlah,
+                        'satuan'           => $ingredient->pivot->satuan,
+                        'estimated_price'  => $ingredient->avg_price ?? 0,
+                        'catatan'          => $ingredient->pivot->keterangan,
+                    ]);
+                }
+            } elseif (!empty($resep->bahan_makanan)) {
+                // Fallback: Jika pakai JSON bahan_makanan
+                foreach ($resep->bahan_makanan as $bahan) {
+                    $namaItem = is_array($bahan) ? ($bahan['nama'] ?? 'Unknown') : $bahan;
+                    $jumlah   = is_array($bahan) ? ($bahan['jumlah'] ?? 1) : 1;
+                    $satuan   = is_array($bahan) ? ($bahan['satuan'] ?? 'pcs') : 'pcs';
+
+                    ShoppingListItem::create([
+                        'shopping_list_id' => $list->id,
+                        'nama_item'        => $namaItem,
+                        'jumlah'           => $jumlah,
+                        'satuan'           => $satuan,
+                        'estimated_price'  => 0,
+                    ]);
+                }
+            }
+
+            $list->recalculateTotals();
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Memo berhasil dibuat dari resep ' . $resep->nama_resep,
+                'data'    => $list->load(['items', 'recipe:id,nama_resep,gambar']),
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal membuat memo: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * GET /api/shopping-lists/{id}
+     * Detail memo + semua item
+     */
+    public function show(Request $request, $id)
+    {
+        $list = ShoppingList::where('user_id', $request->user()->id)
+            ->with([
+                'recipe:id,nama_resep,gambar,kategori',
+                'items.ingredient:id,nama,satuan',
+            ])
             ->findOrFail($id);
 
+        $items         = $list->items;
+        $totalItems    = $items->count();
+        $purchasedItems = $items->where('is_purchased', true)->count();
+
         return response()->json([
             'success' => true,
-            'data' => $shoppingList
+            'message' => 'Detail memo berhasil diambil',
+            'data'    => [
+                'id'             => $list->id,
+                'nama_list'      => $list->nama_list,
+                'shopping_date'  => $list->shopping_date,
+                'status'         => $list->status,
+                'catatan'        => $list->catatan,
+                'recipe'         => $list->recipe,
+
+                // Progres belanja
+                'progres' => [
+                    'total_items'     => $totalItems,
+                    'purchased_items' => $purchasedItems,
+                    'remaining_items' => $totalItems - $purchasedItems,
+                    'percentage'      => $totalItems > 0
+                        ? round(($purchasedItems / $totalItems) * 100)
+                        : 0,
+                ],
+
+                // Ringkasan harga
+                'ringkasan_harga' => [
+                    'total_estimasi'    => (float) $list->total_estimated_price,
+                    'total_sudah_beli'  => (float) $items->whereNotNull('actual_price')->sum('actual_price'),
+                    'total_belum_beli'  => (float) $items->where('is_purchased', false)->sum('estimated_price'),
+                    'total_aktual'      => (float) $list->total_actual_price,
+                    'selisih'           => (float) ($list->total_actual_price - $list->total_estimated_price),
+                ],
+
+                // Item belanja
+                'items' => $items->map(fn($item) => [
+                    'id'              => $item->id,
+                    'nama_item'       => $item->nama_item,
+                    'jumlah'          => (float) $item->jumlah,
+                    'satuan'          => $item->satuan,
+                    'estimated_price' => (float) $item->estimated_price,
+                    'actual_price'    => $item->actual_price ? (float) $item->actual_price : null,
+                    'is_purchased'    => $item->is_purchased,
+                    'purchased_at'    => $item->purchased_at,
+                    'catatan'         => $item->catatan,
+                    'ingredient'      => $item->ingredient,
+                ]),
+
+                'created_at' => $list->created_at,
+                'updated_at' => $list->updated_at,
+            ]
         ]);
     }
 
+    /**
+     * PUT /api/shopping-lists/{id}
+     * Update memo (nama, tanggal, catatan)
+     */
     public function update(Request $request, $id)
     {
-        $shoppingList = ShoppingList::where('user_id', auth()->id())
-            ->findOrFail($id);
+        $list = ShoppingList::where('user_id', $request->user()->id)->findOrFail($id);
 
-        $request->validate([
-            'nama_item' => 'required|string|max:255',
-            'jumlah' => 'required|integer|min:1',
-            'satuan' => 'required|string|max:50',
-            'harga' => 'nullable|numeric|min:0',
-            'kategori' => 'nullable|string|max:100',
-            'catatan' => 'nullable|string',
+        $validator = Validator::make($request->all(), [
+            'nama_list'     => 'sometimes|string|max:255',
+            'shopping_date' => 'sometimes|date',
+            'catatan'       => 'nullable|string',
         ]);
 
-        $shoppingList->update($request->all());
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+
+        $list->update($request->only(['nama_list', 'shopping_date', 'catatan']));
 
         return response()->json([
             'success' => true,
-            'message' => 'Item berhasil diupdate',
-            'data' => $shoppingList
+            'message' => 'Memo berhasil diupdate',
+            'data'    => $list->load('items'),
         ]);
     }
 
-    public function destroy($id)
+    /**
+     * DELETE /api/shopping-lists/{id}
+     * Hapus memo beserta items dan expenses-nya
+     */
+    public function destroy(Request $request, $id)
     {
-        $shoppingList = ShoppingList::where('user_id', auth()->id())
-            ->findOrFail($id);
-
-        $shoppingList->delete();
+        $list = ShoppingList::where('user_id', $request->user()->id)->findOrFail($id);
+        $list->delete();
 
         return response()->json([
             'success' => true,
-            'message' => 'Item berhasil dihapus'
-        ]);
-    }
-
-    public function updateHarga(Request $request, $id)
-    {
-        $shoppingList = ShoppingList::where('user_id', auth()->id())
-            ->findOrFail($id);
-
-        $request->validate([
-            'harga' => 'required|numeric|min:0',
-        ]);
-
-        $shoppingList->update(['harga' => $request->harga]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Harga berhasil diupdate',
-            'data' => $shoppingList
-        ]);
-    }
-
-    public function markAsBought(Request $request, $id)
-    {
-        $shoppingList = ShoppingList::where('user_id', auth()->id())
-            ->findOrFail($id);
-
-        $request->validate([
-            'harga' => 'required|numeric|min:0',
-        ]);
-
-        $shoppingList->update([
-            'harga' => $request->harga,
-            'sudah_dibeli' => true,
-            'tanggal_dibeli' => now(),
-        ]);
-
-        // Pindahkan ke riwayat pengeluaran
-        Expense::create([
-            'user_id' => auth()->id(),
-            'tanggal_transaksi' => now(),
-            'nama_item' => $shoppingList->nama_item,
-            'jumlah' => $shoppingList->jumlah,
-            'satuan' => $shoppingList->satuan,
-            'harga_satuan' => $request->harga,
-            'total_harga' => $request->harga * $shoppingList->jumlah,
-            'kategori' => $shoppingList->kategori,
-            'catatan' => $shoppingList->catatan,
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Item ditandai sudah dibeli dan ditambahkan ke riwayat pengeluaran',
-            'data' => $shoppingList
-        ]);
-    }
-
-    public function calculateTotal(Request $request)
-    {
-        $total = $request->user()
-            ->shoppingLists()
-            ->whereNotNull('harga')
-            ->sum('harga');
-
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'total_pengeluaran' => $total
-            ]
+            'message' => 'Memo berhasil dihapus',
         ]);
     }
 }

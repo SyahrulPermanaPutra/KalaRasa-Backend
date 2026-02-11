@@ -11,9 +11,9 @@ class ResepController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Resep::all();
+        // $query = Resep::all();
 
-        // $query = Resep::all()->approved()->with(['creator']);
+        $query = Resep::approved()->with(['creator']);
 
         // Filter berdasarkan kategori
         if ($request->has('kategori')) {
@@ -34,8 +34,7 @@ class ResepController extends Controller
             });
         }
 
-        $reseps = Resep::orderBy('created_at', 'desc')
-            ->paginate($request->input('per_page', 15));
+        $reseps = $query->paginate($request->input('per_page', 15));
 
         return response()->json([
             'success' => true,
@@ -45,22 +44,26 @@ class ResepController extends Controller
 
     public function show(Request $request, $id)
     {
-        $resep = Resep::approved()
-            ->with(['creator', 'favoritedBy'])
-            ->findOrFail($id);
+        $resep = Resep::approved()->with([
+            'creator:id,name,avatar',
+            'ingredients:id,nama,kategori'
+        ])
+        ->findOrFail($id);
+
+        // $resep = Resep::approved()
+        //     ->with(['creator', 'favoritedBy'])
+        //     ->findOrFail($id);
 
         // Check if current user favorited this
-        $isFavorited = false;
-        if ($request->user()) {
-            $isFavorited = $resep->favoritedBy->contains($request->user()->id); 
-        }
+        // $isFavorited = false;
+        // if ($request->user()) {
+        //     $isFavorited = $resep->favoritedBy->contains($request->user()->id); 
+        // }
 
         return response()->json([
             'success' => true,
             'data' => [
                 'resep' => $resep,
-                'is_favorited' => $isFavorited,
-                'total_favorites' => $resep->favoritedBy->count()
             ]
         ]);
     }

@@ -34,29 +34,21 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::post('/profile', [AuthController::class, 'updateProfile']);
 
-    // Shopping List Routes
-    Route::prefix('shopping-lists')->group(function () {
-        Route::get('/', [ShoppingListController::class, 'index']);
-        Route::post('/', [ShoppingListController::class, 'store']);
-        Route::get('/{id}', [ShoppingListController::class, 'show']);
-        Route::put('/{id}', [ShoppingListController::class, 'update']);
-        Route::delete('/{id}', [ShoppingListController::class, 'destroy']);
-        Route::patch('/{id}/update-harga', [ShoppingListController::class, 'updateHarga']);
-        Route::patch('/{id}/mark-as-bought', [ShoppingListController::class, 'markAsBought']);
-        Route::get('/calculate/total', [ShoppingListController::class, 'calculateTotal']);
+    // ── Grafik Pengeluaran ─────────────────────────────────────
+    Route::prefix('shopping-lists/grafik')->group(function () {
+        Route::get('/harian',   [ShoppingListController::class, 'grafikHarian']);
+        Route::get('/mingguan', [ShoppingListController::class, 'grafikMingguan']);
+        Route::get('/bulanan',  [ShoppingListController::class, 'grafikBulanan']);
     });
 
-    // Expense Routes
-    Route::prefix('expenses')->group(function () {
-        Route::get('/', [ExpenseController::class, 'index']);
-        Route::post('/', [ExpenseController::class, 'store']);
-        Route::get('/{id}', [ExpenseController::class, 'show']);
-        Route::delete('/{id}', [ExpenseController::class, 'destroy']);
-        
-        // Rekap Routes
-        Route::get('/rekap/harian', [ExpenseController::class, 'rekapHarian']);
-        Route::get('/rekap/mingguan', [ExpenseController::class, 'rekapMingguan']);
-        Route::get('/rekap/bulanan', [ExpenseController::class, 'rekapBulanan']);
+    // ── Memo / Shopping List CRUD ─────────────────────────────
+    Route::prefix('shopping-lists')->group(function () {
+        Route::get('/',                      [ShoppingListController::class, 'index']);
+        Route::post('/',                     [ShoppingListController::class, 'store']);
+        Route::post('/from-recipe/{id}',     [ShoppingListController::class, 'storeFromRecipe']);
+        Route::get('/{id}',                  [ShoppingListController::class, 'show']);
+        Route::put('/{id}',                  [ShoppingListController::class, 'update']);
+        Route::delete('/{id}',               [ShoppingListController::class, 'destroy']);
     });
 
     // Resep Routes (User)

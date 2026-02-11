@@ -12,25 +12,30 @@ class Resep extends Model
     protected $table = 'recipes';
 
     protected $fillable = [
-        'nama_resep',
+        'nama',
+        'tingkat_kesulitan',
+        'waktu_masak',
+        'kalori_per_porsi',
+        'region',
         'deskripsi',
         'gambar',
-        'bahan_makanan',
-        'cara_memasak',
-        'porsi',
-        'waktu_memasak',
-        'tingkat_kesulitan',
         'kategori',
         'status',
         'created_by',
         'approved_by',
         'approved_at',
         'rejection_reason',
+        'avg_rating',
+        'total_ratings',
+        'view_count',
     ];
 
     protected $casts = [
         'bahan_makanan' => 'array',
-        'approved_at' => 'datetime',
+        'approved_at'   => 'datetime',
+        'avg_rating'    => 'decimal:2',
+        'total_ratings' => 'integer',
+        'view_count'    => 'integer',
     ];
 
     public function creator()
@@ -61,5 +66,16 @@ class Resep extends Model
     public function scopeRejected($query)
     {
         return $query->where('status', 'rejected');
+    }
+
+    public function ingredients()
+    {
+        return $this->belongsToMany(
+            Ingredient::class,
+            'recipe_ingredients',
+            'recipe_id',
+            'ingredient_id'
+        )->withPivot('is_main','jumlah')
+         ->withTimestamps();
     }
 }

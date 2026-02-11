@@ -11,20 +11,20 @@ class ShoppingList extends Model
 
     protected $fillable = [
         'user_id',
-        'nama_item',
-        'jumlah',
-        'satuan',
-        'harga',
-        'sudah_dibeli',
-        'tanggal_dibeli',
-        'kategori',
+        'recipe_id',
+        'nama_list',
+        'shopping_date',
+        'status',
         'catatan',
+        'harga',
+        'total_estimated_price',
+        'total_actual_price',
     ];
 
     protected $casts = [
-        'harga' => 'decimal:2',
-        'sudah_dibeli' => 'boolean',
-        'tanggal_dibeli' => 'date',
+        'shopping_date' => 'date',
+        'total_estimated_price' => 'decimal:2',
+        'total_actual_price' => 'decimal:2',
     ];
 
     public function user()
@@ -32,13 +32,53 @@ class ShoppingList extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function scopeBelumDibeli($query)
+    public function recipe()
     {
-        return $query->where('sudah_dibeli', false);
+        return $this->belongsTo(Resep::class, 'recipe_id');
     }
 
-    public function scopeSudahDibeli($query)
+    public function items()
     {
-        return $query->where('sudah_dibeli', true);
+        return $this->hasMany(ShoppingListItem::class);
     }
+
+    public function expenses()
+    {
+        return $this->hasMany(Expense::class);
+    }
+
+    /*
+    | Helper Methods
+    **--------------------------------------------------------------------------
+    Recalculate the total estimated & actual prices of all items.
+    */
+    public function recalculateTotals(): void
+    {
+        $this->update([
+            'total_estimated_price' => $this->items()->sum('estimated_price'),
+            'total_actual_price' => $this->items()->whereNotNull('actual_price')->sum('actual_price'),
+        ]);
+    }
+    
+    /*
+    | Check if all items have been purchased, then update the status
+    **--------------------------------------------------------------------------
+    */
+    public function checkAndCompleteStatus(): void
+    {
+        $totalItems     = $this->items()->count();
+        $purchasedItems = $this->items()->where('is_purchased', true)->count();
+
+        if ($totalItems > 0 && $totalItems === $purchasedItems) {
+            $this->update(['status' => 'completed']);
+        }
+    }
+
+    /**
+     * Scopes
+     * -------------------------------------------------------------------------
+     */
+    public function scopePending($q)   { return $q->where('status', 'pending'); }
+    public function scopeCompleted($q) { return $q->where('status', 'completed'); }
+    
 }
