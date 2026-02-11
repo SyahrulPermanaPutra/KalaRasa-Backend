@@ -16,8 +16,9 @@ class AuthController extends Controller
     | LOGIN
     |--------------------------------------------------------------------------
     | - Simpan device per app
-    | - Revoke token lama (device + app saja)
-    | - Minta token baru ke Passport (server 8001)
+    | - Revoke token lama device+app
+    | - Minta token baru ke Passport
+    | - Tag token dengan device_uuid + app_id
     */
 
     public function login(Request $request)
@@ -39,6 +40,8 @@ class AuthController extends Controller
             ], 401);
         }
 
+        $tokenName = $request->device_uuid . '_' . $request->app_id;
+
         /*
         |--------------------------------------------------
         | 1. SIMPAN DEVICE PER APP
@@ -59,11 +62,9 @@ class AuthController extends Controller
 
         /*
         |--------------------------------------------------
-        | 2. REVOKE TOKEN LAMA (DEVICE + APP SAJA)
+        | 2. REVOKE TOKEN LAMA DEVICE + APP INI SAJA
         |--------------------------------------------------
         */
-        $tokenName = $request->device_uuid . '_' . $request->app_id;
-
         DB::table('oauth_access_tokens')
             ->where('user_id', $user->id)
             ->where('name', $tokenName)
@@ -71,14 +72,14 @@ class AuthController extends Controller
 
         /*
         |--------------------------------------------------
-        | 3. MINTA TOKEN KE PASSPORT (SERVER 8001)
+        | 3. MINTA TOKEN BARU KE PASSPORT (SERVER 8002)
         |--------------------------------------------------
         */
         $http = app()->make(\GuzzleHttp\Client::class);
 
         try {
             $response = $http->post('http://127.0.0.1:8002/oauth/token', [
-                'timeout' => 5,
+                'timeout' => 10,
                 'form_params' => [
                     'grant_type'    => 'password',
                     'client_id'     => env('PASSPORT_PASSWORD_CLIENT_ID'),
@@ -93,14 +94,26 @@ class AuthController extends Controller
 
             /*
             |--------------------------------------------------
-            | 4. TAG TOKEN DENGAN DEVICE + APP
+            | 4. AMBIL TOKEN TERBARU MILIK USER
             |--------------------------------------------------
             */
-            DB::table('oauth_access_tokens')
-                ->where('id', $data['access_token'])
-                ->update([
-                    'name' => $tokenName
-                ]);
+            $latestToken = DB::table('oauth_access_tokens')
+                ->where('user_id', $user->id)
+                ->orderByDesc('created_at')
+                ->first();
+
+            /*
+            |--------------------------------------------------
+            | 5. TAG TOKEN DENGAN device_uuid + app_id
+            |--------------------------------------------------
+            */
+            if ($latestToken) {
+                DB::table('oauth_access_tokens')
+                    ->where('id', $latestToken->id)
+                    ->update([
+                        'name' => $tokenName
+                    ]);
+            }
 
             return response()->json([
                 'user'          => $user,
@@ -113,8 +126,7 @@ class AuthController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'message' => 'Login gagal',
-                'error'   => $e->getMessage(),
-                'trace'   => $e->getTraceAsString()
+                'error'   => $e->getMessage()
             ], 500);
         }
     }
@@ -124,7 +136,6 @@ class AuthController extends Controller
     | ME
     |--------------------------------------------------------------------------
     */
-
     public function me(Request $request)
     {
         return response()->json([
@@ -134,64 +145,50 @@ class AuthController extends Controller
 
     /*
     |--------------------------------------------------------------------------
-    | LIST DEVICES (PER DEVICE + PER APP)
+    | LIST DEVICES AKTIF
     |--------------------------------------------------------------------------
     */
+    public function devices(Request $request)
+    {
+        $user = $request->user();
+        $currentTokenId = $user->token()->id;
 
-public function devices(Request $request)
-{
-    $user = $request->user();
-    $currentTokenId = optional($user->token())->id;
+        $devices = DB::table('oauth_access_tokens as t')
+            ->join('user_devices as d', function ($join) use ($user) {
+                $join->on('d.device_uuid', '=', DB::raw("SUBSTRING_INDEX(t.name, '_', 1)"))
+                     ->where('d.user_id', '=', $user->id);
+            })
+            ->where('t.user_id', $user->id)
+            ->where('t.revoked', false)
+            ->select(
+                'd.device_uuid',
+                'd.device_name',
+                'd.platform',
+                'd.app_id',
+                'd.last_login_at',
+                't.created_at as token_created_at',
+                't.id as token_id'
+            )
+            ->orderByDesc('d.last_login_at')
+            ->get()
+            ->map(function ($device) use ($currentTokenId) {
+                $device->is_current_device = $device->token_id == $currentTokenId;
+                return $device;
+            });
 
-    $devices = UserDevice::where('user_id', $user->id)
-        ->orderByDesc('last_login_at')
-        ->get()
-        ->map(function ($device) use ($user, $currentTokenId) {
-
-            $tokenName = $device->device_uuid . '_' . $device->app_id;
-
-            $token = DB::table('oauth_access_tokens')
-                ->where('user_id', $user->id)
-                ->where('name', $tokenName)
-                ->where('revoked', false)
-                ->latest('created_at')
-                ->first();
-
-            return [
-                'device_uuid'        => $device->device_uuid,
-                'app_id'             => $device->app_id,
-                'device_name'        => $device->device_name,
-                'platform'           => $device->platform,
-                'last_login_at'      => $device->last_login_at,
-                'token_created_at'   => $token->created_at ?? null,
-                'token_id'           => $token->id ?? null,
-                'is_current_device'  => ($token && $token->id == $currentTokenId)
-            ];
-        });
-
-    return response()->json([
-        'devices' => $devices
-    ]);
-}
-
+        return response()->json([
+            'devices' => $devices
+        ]);
+    }
 
     /*
     |--------------------------------------------------------------------------
     | LOGOUT CURRENT DEVICE
     |--------------------------------------------------------------------------
     */
-
     public function logout(Request $request)
     {
-        $user = $request->user();
-
-        if (!$user) {
-            return response()->json([
-                'message' => 'Token tidak valid'
-            ], 401);
-        }
-
-        $token = $user->token();
+        $token = $request->user()->token();
 
         if ($token) {
             $token->revoke();
@@ -204,10 +201,9 @@ public function devices(Request $request)
 
     /*
     |--------------------------------------------------------------------------
-    | LOGOUT DEVICE TERTENTU (PER APP)
+    | LOGOUT DEVICE TERTENTU
     |--------------------------------------------------------------------------
     */
-
     public function logoutDevice(Request $request)
     {
         $request->validate([
@@ -216,7 +212,6 @@ public function devices(Request $request)
         ]);
 
         $user = $request->user();
-
         $tokenName = $request->device_uuid . '_' . $request->app_id;
 
         DB::table('oauth_access_tokens')
@@ -236,10 +231,9 @@ public function devices(Request $request)
 
     /*
     |--------------------------------------------------------------------------
-    | REFRESH TOKEN (SERVER 8001)
+    | REFRESH TOKEN
     |--------------------------------------------------------------------------
     */
-
     public function refreshToken(Request $request)
     {
         $request->validate([
@@ -250,7 +244,7 @@ public function devices(Request $request)
 
         try {
             $response = $http->post('http://127.0.0.1:8002/oauth/token', [
-                'timeout' => 5,
+                'timeout' => 10,
                 'form_params' => [
                     'grant_type'    => 'refresh_token',
                     'refresh_token' => $request->refresh_token,
