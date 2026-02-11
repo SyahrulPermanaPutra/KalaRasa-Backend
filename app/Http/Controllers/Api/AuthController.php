@@ -8,6 +8,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rules\Password;
 
 class AuthController extends Controller
 {
@@ -16,9 +18,8 @@ class AuthController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users',
-            'password' => 'required|string|min:6|confirmed',
+            'password' => ['required', 'confirmed', Password::min(6)],
             'phone' => 'nullable|string|max:20',
-            'address' => 'nullable|string',
             'gender' => 'nullable|in:L,P',
             'birth_date' => 'nullable|date',
         ]);
@@ -28,19 +29,19 @@ class AuthController extends Controller
             'email' => $request->email,
             'password' => Hash::make($request->password),
             'phone' => $request->phone,
-            'address' => $request->address,
             'gender' => $request->gender,
             'birth_date' => $request->birth_date,
             'role' => 'user',
+            'email_verified_at' => null,
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
-
+        
         return response()->json([
             'success' => true,
             'message' => 'Registrasi berhasil',
             'data' => [
-                'user' => $user,
+                'user' => $this->formatUserResponse($user),
                 'access_token' => $token,
                 'token_type' => 'Bearer',
             ]
@@ -62,13 +63,17 @@ class AuthController extends Controller
             ]);
         }
 
+        // Hapus token lama
+        $user->tokens()->delete();
+
+        // Buat token baru
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
             'success' => true,
             'message' => 'Login berhasil',
             'data' => [
-                'user' => $user,
+                'user' => $this->formatUserResponse($user),
                 'access_token' => $token,
                 'token_type' => 'Bearer',
             ]
@@ -89,7 +94,7 @@ class AuthController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data' => $request->user()
+            'data' => $this->formatUserResponse($request->user())
         ]);
     }
 
@@ -101,26 +106,27 @@ class AuthController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users,email,' . $user->id,
             'phone' => 'nullable|string|max:20',
-            'address' => 'nullable|string',
-            'avatar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
             'gender' => 'nullable|in:L,P',
             'birth_date' => 'nullable|date',
+            'avatar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
         ]);
 
         $user->name = $request->name;
         $user->email = $request->email;
         $user->phone = $request->phone;
-        $user->address = $request->address;
+        $user->gender = $request->gender;
+        $user->birth_date = $request->birth_date;
 
+        // Handle avatar upload
         if ($request->hasFile('avatar')) {
             // Delete old avatar if exists
-            if ($user->avatar && file_exists(public_path($user->avatar))) {
-                unlink(public_path($user->avatar));
+            if ($user->avatar) {
+                Storage::disk('public')->delete($user->avatar);
             }
 
-            $avatarName = time() . '.' . $request->avatar->extension();
-            $request->avatar->move(public_path('avatars'), $avatarName);
-            $user->avatar = 'avatars/' . $avatarName;
+            // Store new avatar
+            $avatarPath = $request->file('avatar')->store('avatars', 'public');
+            $user->avatar = $avatarPath;
         }
 
         $user->save();
@@ -128,7 +134,28 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Profile berhasil diupdate',
-            'data' => $user
+            'data' => $this->formatUserResponse($user)
         ]);
+    }
+
+    /**
+     * Format user response dengan avatar URL
+     */
+    private function formatUserResponse($user)
+    {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+            'phone' => $user->phone,
+            'gender' => $user->gender,
+            'birth_date' => $user->birth_date,
+            'avatar' => $user->avatar,
+            'avatar_url' => $user->avatar ? Storage::url($user->avatar) : null,
+            'email_verified_at' => $user->email_verified_at,
+            'created_at' => $user->created_at,
+            'updated_at' => $user->updated_at,
+        ];
     }
 }
