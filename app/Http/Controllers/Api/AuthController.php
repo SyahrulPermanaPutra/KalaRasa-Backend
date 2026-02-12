@@ -8,6 +8,8 @@ use App\Models\User;
 use App\Models\UserDevice;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Passport\Passport;
+use Carbon\Carbon;
 
 class AuthController extends Controller
 {
@@ -270,4 +272,13 @@ class AuthController extends Controller
             ], 500);
         }
     }
+
+    public function boot()
+{
+    $this->registerPolicies();
+
+    Passport::tokensExpireIn(Carbon::now()->addMinutes(60));
+    Passport::refreshTokensExpireIn(Carbon::now()->addDays(30));
+}
+
 }
