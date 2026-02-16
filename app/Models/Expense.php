@@ -10,8 +10,13 @@ class Expense extends Model
     use HasFactory;
 
     protected $fillable = [
-        'user_id', 'shopping_list_id', 'shopping_list_item_id',
-        'actual_price', 'purchase_date', 'store_name', 'catatan',
+        'user_id', 
+        'shopping_list_id', 
+        'shopping_list_item_id',
+        'actual_price', 
+        'purchase_date', 
+        'store_name', 
+        'catatan',
     ];
 
     protected $casts = [
@@ -41,18 +46,18 @@ class Expense extends Model
     // Scope untuk filter berdasarkan tanggal
     public function scopeByDateRange($query, $startDate, $endDate)
     {
-        return $query->whereBetween('tanggal_transaksi', [$startDate, $endDate]);
+        return $query->whereBetween('purchase_date', [$startDate, $endDate]);
     }
 
     public function scopeThisMonth($query)
     {
-        return $query->whereMonth('tanggal_transaksi', now()->month)
-                    ->whereYear('tanggal_transaksi', now()->year);
+        return $query->whereMonth('purchase_date', now()->month)
+                    ->whereYear('purchase_date', now()->year);
     }
 
     public function scopeThisWeek($query)
     {
-        return $query->whereBetween('tanggal_transaksi', [
+        return $query->whereBetween('purchase_date', [
             now()->startOfWeek(),
             now()->endOfWeek()
         ]);
@@ -60,6 +65,6 @@ class Expense extends Model
 
     public function scopeToday($query)
     {
-        return $query->whereDate('tanggal_transaksi', today());
+        return $query->whereDate('purchase_date', today());
     }
 }

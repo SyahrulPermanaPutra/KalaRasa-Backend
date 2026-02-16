@@ -107,7 +107,7 @@ class AdminDashboardController extends Controller
 
         // Get latest activities
         $latestExpenses = $user->expenses()
-            ->orderBy('tanggal_transaksi', 'desc')
+            ->orderBy('purchase_date', 'desc')
             ->limit(5)
             ->get();
 
@@ -117,10 +117,11 @@ class AdminDashboardController extends Controller
             ->get();
 
         // Calculate total spending
-        $totalSpending = $user->expenses()->sum('total_harga');
+        $totalSpending = $user->expenses()->sum('actual_price');
         $thisMonthSpending = $user->expenses()
-            ->thisMonth()
-            ->sum('total_harga');
+            ->whereMonth('purchase_date', now()->month)
+            ->whereYear('purchase_date', now()->year)
+            ->sum('actual_price');
 
         return response()->json([
             'success' => true,
@@ -169,50 +170,34 @@ class AdminDashboardController extends Controller
 
     public function expenseStatistics(Request $request)
     {
-        $period = $request->input('period', 'month'); // day, week, month, year
-
-        $query = Expense::query();
-
-        switch ($period) {
-            case 'day':
-                $query->today();
-                break;
-            case 'week':
-                $query->thisWeek();
-                break;
-            case 'month':
-                $query->thisMonth();
-                break;
-            case 'year':
-                $query->whereYear('tanggal_transaksi', now()->year);
-                break;
-        }
-
-        $totalExpenses = $query->sum('total_harga');
-        $totalTransactions = $query->count();
-
-        $byKategori = (clone $query)
-            ->selectRaw('kategori, COUNT(*) as total_transaksi, SUM(total_harga) as total')
-            ->groupBy('kategori')
+        $userId = $request->user()->id;
+        
+        // By Store
+        $byStore = Expense::where('user_id', $userId)
+            ->thisMonth()
+            ->selectRaw('COALESCE(store_name, "Lainnya") as store, SUM(actual_price) as total')
+            ->groupBy('store_name')
+            ->orderBy('total', 'desc')
             ->get();
 
-        $topSpenders = User::where('role', 'user')
-            ->withSum(['expenses' => function($q) use ($query) {
-                $q->whereIn('id', $query->pluck('id'));
-            }], 'total_harga')
-            ->orderBy('expenses_sum_total_harga', 'desc')
-            ->limit(10)
+        // By Date (daily breakdown)
+        $byDate = Expense::where('user_id', $userId)
+            ->thisMonth()
+            ->selectRaw('DATE(purchase_date) as tanggal, SUM(actual_price) as total')
+            ->groupBy('tanggal')
+            ->orderBy('tanggal', 'asc')
             ->get();
 
         return response()->json([
             'success' => true,
             'data' => [
-                'period' => $period,
-                'total_expenses' => $totalExpenses,
-                'total_transactions' => $totalTransactions,
-                'average_per_transaction' => $totalTransactions > 0 ? $totalExpenses / $totalTransactions : 0,
-                'by_kategori' => $byKategori,
-                'top_spenders' => $topSpenders,
+                'by_store' => $byStore,
+                'by_date'  => $byDate,
+                'summary' => [
+                    'total_transaksi' => Expense::where('user_id', $userId)->thisMonth()->count(),
+                    'total_belanja'   => (float) Expense::where('user_id', $userId)->thisMonth()->sum('actual_price'),
+                    'rata_rata'       => (float) Expense::where('user_id', $userId)->thisMonth()->avg('actual_price'),
+                ]
             ]
         ]);
     }
