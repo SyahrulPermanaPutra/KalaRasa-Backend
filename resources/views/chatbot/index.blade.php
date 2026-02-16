@@ -162,7 +162,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function showRecipes(recipes) {
-        recipesContainer.innerHTML = '<h5>Resep yang Cocok:</h5>';
+        recipesContainer.innerHTML = '<h5>Recipe yang Cocok:</h5>';
         
         recipes.slice(0, 3).forEach((match, index) => {
             const recipe = match.recipe;

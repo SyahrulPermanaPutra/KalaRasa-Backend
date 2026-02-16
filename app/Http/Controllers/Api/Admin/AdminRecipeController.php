@@ -3,16 +3,16 @@
 namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\Resep;
+use App\Models\Recipe;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
-class AdminResepController extends Controller
+class AdminRecipeController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Resep::with(['creator', 'approver']);
+        $query = Recipe::with(['creator', 'approver']);
 
         // Filter berdasarkan status
         if ($request->has('status')) {
@@ -40,13 +40,13 @@ class AdminResepController extends Controller
             });
         }
 
-        $reseps = $query->orderBy('created_at', 'desc')
+        $recipes = $query->orderBy('created_at', 'desc')
             ->paginate($request->input('per_page', 15));
 
         return response()->json([
             'success' => true,
             'message' => 'Daftar resep berhasil diambil',
-            'data'    => $reseps
+            'data'    => $recipes
         ]);
     }
 
@@ -90,42 +90,40 @@ class AdminResepController extends Controller
         // Upload gambar jika ada
         if ($request->hasFile('gambar')) {
             $gambarName = time() . '_' . $request->file('gambar')->getClientOriginalName();
-            $path = $request->file('gambar')->move(public_path('reseps'), $gambarName);
-            $data['gambar'] = 'reseps/' . $gambarName;
+            $path = $request->file('gambar')->move(public_path('recipes'), $gambarName);
+            $data['gambar'] = 'recipes/' . $gambarName;
         }
 
-        $resep = Resep::create($data);
+        $recipe = Recipe::create($data);
 
         return response()->json([
             'success' => true,
             'message' => 'Resep berhasil ditambahkan',
-            'data'    => $resep->load(['creator', 'approver'])
+            'data'    => $recipe->load(['creator', 'approver'])
         ], 201);
     }
 
     public function show($id)
     {
-        $resep = Resep::with(['creator', 'approver', 'favoritedBy', 'ratings'])
+        $recipe = Recipe::with(['creator', 'approver', 'favoritedBy', 'ratings'])
             ->findOrFail($id);
 
         return response()->json([
             'success' => true,
             'message' => 'Detail resep berhasil diambil',
-            'data'    => $resep
+            'data'    => $recipe
         ]);
     }
 
     public function update(Request $request, $id)
     {
-        $resep = Resep::findOrFail($id);
+        $recipe = Recipe::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
             'nama'               => 'sometimes|required|string|max:255',
             'deskripsi'          => 'nullable|string',
             'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-            'tingkat_kesulitan'  => 'sometimes|required|in:mudah,sedang,sulit',
             'waktu_masak'        => 'nullable|integer|min:1',
-            'kalori_per_porsi'   => 'nullable|integer|min:0',
             'region'             => 'nullable|string|max:100',
             'kategori'           => 'nullable|string|max:100',
         ]);
@@ -151,34 +149,34 @@ class AdminResepController extends Controller
         // Upload gambar baru jika ada
         if ($request->hasFile('gambar')) {
             // Hapus gambar lama
-            if ($resep->gambar && file_exists(public_path($resep->gambar))) {
-                unlink(public_path($resep->gambar));
+            if ($recipe->gambar && file_exists(public_path($recipe->gambar))) {
+                unlink(public_path($recipe->gambar));
             }
 
             $gambarName = time() . '_' . $request->file('gambar')->getClientOriginalName();
-            $request->file('gambar')->move(public_path('reseps'), $gambarName);
-            $data['gambar'] = 'reseps/' . $gambarName;
+            $request->file('gambar')->move(public_path('recipes'), $gambarName);
+            $data['gambar'] = 'recipes/' . $gambarName;
         }
 
-        $resep->update($data);
+        $recipe->update($data);
 
         return response()->json([
             'success' => true,
             'message' => 'Resep berhasil diupdate',
-            'data'    => $resep->fresh()->load(['creator', 'approver'])
+            'data'    => $recipe->fresh()->load(['creator', 'approver'])
         ]);
     }
 
     public function destroy($id)
     {
-        $resep = Resep::findOrFail($id);
+        $recipe = Recipe::findOrFail($id);
 
         // Hapus gambar jika ada
-        if ($resep->gambar && file_exists(public_path($resep->gambar))) {
-            unlink(public_path($resep->gambar));
+        if ($recipe->gambar && file_exists(public_path($recipe->gambar))) {
+            unlink(public_path($recipe->gambar));
         }
 
-        $resep->delete();
+        $recipe->delete();
 
         return response()->json([
             'success' => true,
@@ -188,16 +186,16 @@ class AdminResepController extends Controller
 
     public function approve(Request $request, $id)
     {
-        $resep = Resep::findOrFail($id);
+        $recipe = Recipe::findOrFail($id);
 
-        if ($resep->status !== 'pending') {
+        if ($recipe->status !== 'pending') {
             return response()->json([
                 'success' => false,
-                'message' => 'Resep sudah diproses sebelumnya (status: ' . $resep->status . ')'
+                'message' => 'Resep sudah diproses sebelumnya (status: ' . $recipe->status . ')'
             ], 400);
         }
 
-        $resep->update([
+        $recipe->update([
             'status'           => 'approved',
             'approved_by'      => $request->user()->id,
             'approved_at'      => now(),
@@ -207,18 +205,18 @@ class AdminResepController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Resep berhasil disetujui',
-            'data'    => $resep->fresh()->load(['creator', 'approver'])
+            'data'    => $recipe->fresh()->load(['creator', 'approver'])
         ]);
     }
 
     public function reject(Request $request, $id)
     {
-        $resep = Resep::findOrFail($id);
+        $recipe = Recipe::findOrFail($id);
 
-        if ($resep->status !== 'pending') {
+        if ($recipe->status !== 'pending') {
             return response()->json([
                 'success' => false,
-                'message' => 'Resep sudah diproses sebelumnya (status: ' . $resep->status . ')'
+                'message' => 'Resep sudah diproses sebelumnya (status: ' . $recipe->status . ')'
             ], 400);
         }
 
@@ -237,7 +235,7 @@ class AdminResepController extends Controller
             ], 422);
         }
 
-        $resep->update([
+        $recipe->update([
             'status'           => 'rejected',
             'approved_by'      => $request->user()->id,
             'approved_at'      => now(),
@@ -247,19 +245,19 @@ class AdminResepController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Resep berhasil ditolak',
-            'data'    => $resep->fresh()->load(['creator', 'approver'])
+            'data'    => $recipe->fresh()->load(['creator', 'approver'])
         ]);
     }
 
     public function statistics()
     {
-        $totalReseps    = Resep::count();
-        $approvedReseps = Resep::approved()->count();
-        $pendingReseps  = Resep::pending()->count();
-        $rejectedReseps = Resep::rejected()->count();
+        $totalRecipes    = Recipe::count();
+        $approvedRecipes = Recipe::approved()->count();
+        $pendingRecipes  = Recipe::pending()->count();
+        $rejectedRecipes = Recipe::rejected()->count();
 
         // Statistik berdasarkan kategori (hanya yang approved)
-        $byKategori = Resep::approved()
+        $byKategori = Recipe::approved()
             ->selectRaw('kategori, COUNT(*) as total')
             ->groupBy('kategori')
             ->orderBy('total', 'desc')
@@ -269,19 +267,8 @@ class AdminResepController extends Controller
                 'total'    => $item->total,
             ]);
 
-        // Statistik berdasarkan tingkat kesulitan
-        $byTingkatKesulitan = Resep::approved()
-            ->selectRaw('tingkat_kesulitan, COUNT(*) as total')
-            ->groupBy('tingkat_kesulitan')
-            ->orderByRaw("FIELD(tingkat_kesulitan, 'mudah', 'sedang', 'sulit')")
-            ->get()
-            ->map(fn($item) => [
-                'tingkat_kesulitan' => $item->tingkat_kesulitan,
-                'total'             => $item->total,
-            ]);
-
         // Statistik berdasarkan region
-        $byRegion = Resep::approved()
+        $byRegion = Recipe::approved()
             ->selectRaw('region, COUNT(*) as total')
             ->groupBy('region')
             ->orderBy('total', 'desc')
@@ -292,8 +279,8 @@ class AdminResepController extends Controller
                 'total'  => $item->total,
             ]);
 
-        // Top rated reseps
-        $topRated = Resep::approved()
+        // Top rated recipes
+        $topRated = Recipe::approved()
             ->orderBy('avg_rating', 'desc')
             ->orderBy('total_ratings', 'desc')
             ->limit(5)
@@ -306,8 +293,8 @@ class AdminResepController extends Controller
                 'view_count'    => $item->view_count,
             ]);
 
-        // Most viewed reseps
-        $mostViewed = Resep::approved()
+        // Most viewed recipes
+        $mostViewed = Recipe::approved()
             ->orderBy('view_count', 'desc')
             ->limit(5)
             ->get(['id', 'nama', 'view_count', 'avg_rating'])
@@ -323,13 +310,12 @@ class AdminResepController extends Controller
             'message' => 'Statistik resep berhasil diambil',
             'data'    => [
                 'summary' => [
-                    'total_reseps' => $totalReseps,
-                    'approved'     => $approvedReseps,
-                    'pending'      => $pendingReseps,
-                    'rejected'     => $rejectedReseps,
+                    'total_recipes' => $totalRecipes,
+                    'approved'     => $approvedRecipes,
+                    'pending'      => $pendingRecipes,
+                    'rejected'     => $rejectedRecipes,
                 ],
                 'by_kategori'          => $byKategori,
-                'by_tingkat_kesulitan' => $byTingkatKesulitan,
                 'by_region'            => $byRegion,
                 'top_rated'            => $topRated,
                 'most_viewed'          => $mostViewed,

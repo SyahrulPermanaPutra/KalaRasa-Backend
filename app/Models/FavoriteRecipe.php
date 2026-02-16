@@ -5,13 +5,13 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class FavoriteResep extends Model
+class FavoriteRecipe extends Model
 {
     use HasFactory;
 
     protected $fillable = [
         'user_id',
-        'resep_id',
+        'recipe_id',
     ];
 
     public function user()
@@ -19,8 +19,8 @@ class FavoriteResep extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function resep()
+    public function recipe()
     {
-        return $this->belongsTo(Resep::class);
+        return $this->belongsTo(Recipe::class);
     }
 }

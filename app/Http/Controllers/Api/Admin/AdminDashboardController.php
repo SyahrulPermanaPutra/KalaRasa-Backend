@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
-use App\Models\Resep;
+use App\Models\Recipe;
 use App\Models\ShoppingList;
 use App\Models\Expense;
 use Illuminate\Http\Request;
@@ -22,11 +22,11 @@ class AdminDashboardController extends Controller
             ->whereYear('created_at', now()->year)
             ->count();
 
-        // Resep Statistics
-        $totalReseps = Resep::count();
-        $approvedReseps = Resep::approved()->count();
-        $pendingReseps = Resep::pending()->count();
-        $rejectedReseps = Resep::rejected()->count();
+        // Recipe Statistics
+        $totalRecipes = Recipe::count();
+        $approvedRecipes = Recipe::approved()->count();
+        $pendingRecipes = Recipe::pending()->count();
+        $rejectedRecipes = Recipe::rejected()->count();
 
         // Shopping List Statistics
         $totalShoppingLists = ShoppingList::count();
@@ -52,11 +52,11 @@ class AdminDashboardController extends Controller
                     'total'             => $totalUsers,
                     'new_this_month'    => $newUsersThisMonth,
                 ],
-                'reseps' => [
-                    'total'    => $totalReseps,
-                    'approved' => $approvedReseps,
-                    'pending'  => $pendingReseps,
-                    'rejected' => $rejectedReseps,
+                'recipes' => [
+                    'total'    => $totalRecipes,
+                    'approved' => $approvedRecipes,
+                    'pending'  => $pendingRecipes,
+                    'rejected' => $rejectedRecipes,
                 ],
                 'shopping_lists' => [
                     'total'     => $totalShoppingLists,
@@ -89,7 +89,7 @@ class AdminDashboardController extends Controller
             });
         }
 
-        $users = $query->withCount(['shoppingLists', 'expenses', 'favoriteReseps'])
+        $users = $query->withCount(['shoppingLists', 'expenses', 'favoriteRecipes'])
             ->orderBy('created_at', 'desc')
             ->paginate($request->input('per_page', 15));
 
@@ -102,7 +102,7 @@ class AdminDashboardController extends Controller
     public function userDetail($id)
     {
         $user = User::where('role', 'user')
-            ->withCount(['shoppingLists', 'expenses', 'favoriteReseps'])
+            ->withCount(['shoppingLists', 'expenses', 'favoriteRecipes'])
             ->findOrFail($id);
 
         // Get latest activities
@@ -139,21 +139,21 @@ class AdminDashboardController extends Controller
         ]);
     }
 
-    public function resepStatistics()
+    public function recipeStatistics()
     {
-        $topFavoritedReseps = Resep::approved()
+        $topFavoritedRecipes = Recipe::approved()
             ->withCount('favoritedBy')
             ->orderBy('favorited_by_count', 'desc')
             ->limit(10)
             ->get();
 
-        $recentlyAdded = Resep::approved()
+        $recentlyAdded = Recipe::approved()
             ->with('creator')
             ->orderBy('created_at', 'desc')
             ->limit(10)
             ->get();
 
-        $byKategori = Resep::approved()
+        $byKategori = Recipe::approved()
             ->selectRaw('kategori, COUNT(*) as total')
             ->groupBy('kategori')
             ->get();
@@ -161,7 +161,7 @@ class AdminDashboardController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'top_favorited' => $topFavoritedReseps,
+                'top_favorited' => $topFavoritedRecipes,
                 'recently_added' => $recentlyAdded,
                 'by_kategori' => $byKategori,
             ]

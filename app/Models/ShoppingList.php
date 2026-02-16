@@ -34,7 +34,7 @@ class ShoppingList extends Model
 
     public function recipe()
     {
-        return $this->belongsTo(Resep::class, 'recipe_id');
+        return $this->belongsTo(Recipe::class, 'recipe_id');
     }
 
     public function items()

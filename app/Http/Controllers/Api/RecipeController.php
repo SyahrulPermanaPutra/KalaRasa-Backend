@@ -3,17 +3,17 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Resep;
+use App\Models\Recipe;
 use App\Models\ShoppingList;
 use Illuminate\Http\Request;
 
-class ResepController extends Controller
+class RecipeController extends Controller
 {
     public function index(Request $request)
     {
-        // $query = Resep::all();
+        // $query = Recipe::all();
 
-        $query = Resep::approved()->with(['creator']);
+        $query = Recipe::approved()->with(['creator']);
 
         // Filter berdasarkan kategori
         if ($request->has('kategori')) {
@@ -29,50 +29,50 @@ class ResepController extends Controller
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
-                $q->where('nama_resep', 'like', "%{$search}%")
+                $q->where('nama_recipe', 'like', "%{$search}%")
                   ->orWhere('deskripsi', 'like', "%{$search}%");
             });
         }
 
-        $reseps = $query->paginate($request->input('per_page', 15));
+        $recipes = $query->paginate($request->input('per_page', 15));
 
         return response()->json([
             'success' => true,
-            'data' => $reseps
+            'data' => $recipes
         ]);
     }
 
     public function show(Request $request, $id)
     {
-        $resep = Resep::approved()->with([
+        $recipe = Recipe::approved()->with([
             'creator:id,name,avatar',
             'ingredients:id,nama,kategori'
         ])
         ->findOrFail($id);
 
-        // $resep = Resep::approved()
+        // $recipe = Recipe::approved()
         //     ->with(['creator', 'favoritedBy'])
         //     ->findOrFail($id);
 
         // Check if current user favorited this
         // $isFavorited = false;
         // if ($request->user()) {
-        //     $isFavorited = $resep->favoritedBy->contains($request->user()->id); 
+        //     $isFavorited = $recipe->favoritedBy->contains($request->user()->id); 
         // }
 
         return response()->json([
             'success' => true,
             'data' => [
-                'resep' => $resep,
+                'recipe' => $recipe,
             ]
         ]);
     }
 
     public function addToShoppingList(Request $request, $id)
     {
-        $resep = Resep::approved()->findOrFail($id);
+        $recipe = Recipe::approved()->findOrFail($id);
         
-        $bahanMakanan = $resep->bahan_makanan;
+        $bahanMakanan = $recipe->bahan_makanan;
         $user = $request->user();
 
         $addedItems = [];
@@ -97,7 +97,7 @@ class ResepController extends Controller
                 'jumlah' => $jumlah,
                 'satuan' => $satuan,
                 'kategori' => 'bahan_makanan',
-                'catatan' => 'Dari resep: ' . $resep->nama_resep,
+                'catatan' => 'Dari resep: ' . $recipe->nama_recipe,
             ]);
 
             $addedItems[] = $shoppingItem;
@@ -112,15 +112,15 @@ class ResepController extends Controller
 
     public function toggleFavorite(Request $request, $id)
     {
-        $resep = Resep::approved()->findOrFail($id);
+        $recipe = Recipe::approved()->findOrFail($id);
         $user = $request->user();
 
-        if ($user->favoriteReseps()->where('resep_id', $id)->exists()) {
-            $user->favoriteReseps()->detach($id);
+        if ($user->favoriteRecipes()->where('recipe_id', $id)->exists()) {
+            $user->favoriteRecipes()->detach($id);
             $message = 'Resep dihapus dari favorit';
             $isFavorited = false;
         } else {
-            $user->favoriteReseps()->attach($id);
+            $user->favoriteRecipes()->attach($id);
             $message = 'Resep ditambahkan ke favorit';
             $isFavorited = true;
         }
@@ -130,7 +130,7 @@ class ResepController extends Controller
             'message' => $message,
             'data' => [
                 'is_favorited' => $isFavorited,
-                'total_favorites' => $resep->favoritedBy()->count()
+                'total_favorites' => $recipe->favoritedBy()->count()
             ]
         ]);
     }
@@ -138,9 +138,9 @@ class ResepController extends Controller
     public function myFavorites(Request $request)
     {
         $favorites = $request->user()
-            ->favoriteReseps()
+            ->favoriteRecipes()
             ->with(['creator'])
-            ->orderBy('favorite_reseps.created_at', 'desc')
+            ->orderBy('favorite_recipes.created_at', 'desc')
             ->paginate($request->input('per_page', 15));
 
         return response()->json([

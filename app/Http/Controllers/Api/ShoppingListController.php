@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Expense;
 use App\Models\Ingredient;
-use App\Models\Resep;
+use App\Models\Recipe;
 use App\Models\ShoppingList;
 use App\Models\ShoppingListItem;
 use Carbon\Carbon;
@@ -146,7 +146,7 @@ class ShoppingListController extends Controller
     {
         $query = ShoppingList::where('user_id', $request->user()->id)
             ->with([
-                'recipe:id,nama_resep,gambar',
+                'recipe:id,nama_recipe,gambar',
                 'items',
             ])
             ->orderBy('created_at', 'desc');
@@ -255,7 +255,7 @@ class ShoppingListController extends Controller
 
     /**
      * POST /api/shopping-lists/from-recipe/{id}
-     * Buat memo dari resep (auto-fill bahan)
+     * Buat memo dari recipe (auto-fill bahan)
      */
     public function storeFromRecipe(Request $request, $recipeId)
     {
@@ -273,26 +273,26 @@ class ShoppingListController extends Controller
             ], 422);
         }
 
-        $resep = Resep::approved()
+        $recipe = Recipe::approved()
             ->with('ingredients')
             ->findOrFail($recipeId);
 
         DB::beginTransaction();
         try {
-            // Buat shopping list dari resep
+            // Buat shopping list dari recipe
             $list = ShoppingList::create([
                 'user_id'       => $request->user()->id,
-                'recipe_id'     => $resep->id,
-                'nama_list'     => $request->nama_list ?? 'Belanja - ' . $resep->nama_resep,
+                'recipe_id'     => $recipe->id,
+                'nama_list'     => $request->nama_list ?? 'Belanja - ' . $recipe->nama_recipe,
                 'shopping_date' => $request->shopping_date ?? now()->format('Y-m-d'),
                 'catatan'       => $request->catatan,
                 'status'        => 'pending',
             ]);
 
-            // Auto-fill items dari bahan resep
-            if ($resep->ingredients->count() > 0) {
+            // Auto-fill items dari bahan recipe
+            if ($recipe->ingredients->count() > 0) {
                 // Jika relasi ingredients ada
-                foreach ($resep->ingredients as $ingredient) {
+                foreach ($recipe->ingredients as $ingredient) {
                     ShoppingListItem::create([
                         'shopping_list_id' => $list->id,
                         'ingredient_id'    => $ingredient->id,
@@ -303,9 +303,9 @@ class ShoppingListController extends Controller
                         'catatan'          => $ingredient->pivot->keterangan,
                     ]);
                 }
-            } elseif (!empty($resep->bahan_makanan)) {
+            } elseif (!empty($recipe->bahan_makanan)) {
                 // Fallback: Jika pakai JSON bahan_makanan
-                foreach ($resep->bahan_makanan as $bahan) {
+                foreach ($recipe->bahan_makanan as $bahan) {
                     $namaItem = is_array($bahan) ? ($bahan['nama'] ?? 'Unknown') : $bahan;
                     $jumlah   = is_array($bahan) ? ($bahan['jumlah'] ?? 1) : 1;
                     $satuan   = is_array($bahan) ? ($bahan['satuan'] ?? 'pcs') : 'pcs';
@@ -325,8 +325,8 @@ class ShoppingListController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Memo berhasil dibuat dari resep ' . $resep->nama_resep,
-                'data'    => $list->load(['items', 'recipe:id,nama_resep,gambar']),
+                'message' => 'Memo berhasil dibuat dari resep ' . $recipe->nama_recipe,
+                'data'    => $list->load(['items', 'recipe:id,nama_recipe,gambar']),
             ], 201);
 
         } catch (\Exception $e) {
@@ -346,7 +346,7 @@ class ShoppingListController extends Controller
     {
         $list = ShoppingList::where('user_id', $request->user()->id)
             ->with([
-                'recipe:id,nama_resep,gambar,kategori',
+                'recipe:id,nama_recipe,gambar,kategori',
                 'items.ingredient:id,nama,satuan',
             ])
             ->findOrFail($id);
