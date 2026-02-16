@@ -30,7 +30,7 @@ class AdminDashboardController extends Controller
 
         // Shopping List Statistics
         $totalShoppingLists = ShoppingList::count();
-        $completedLists     = ShoppingList::completed()->count();  // atau sudahDibeli()
+        $completedLists     = ShoppingList::completed()->count();
         $pendingLists       = ShoppingList::pending()->count();
 
         // Item Statistics (alternatif lebih detail)
