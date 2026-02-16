@@ -56,9 +56,7 @@ class AdminRecipeController extends Controller
             'nama'               => 'required|string|max:255',
             'deskripsi'          => 'nullable|string',
             'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-            'tingkat_kesulitan'  => 'required|in:mudah,sedang,sulit',
             'waktu_masak'        => 'nullable|integer|min:1',
-            'kalori_per_porsi'   => 'nullable|integer|min:0',
             'region'             => 'nullable|string|max:100',
             'kategori'           => 'nullable|string|max:100',
         ]);
@@ -74,9 +72,7 @@ class AdminRecipeController extends Controller
         $data = $request->only([
             'nama',
             'deskripsi',
-            'tingkat_kesulitan',
             'waktu_masak',
-            'kalori_per_porsi',
             'region',
             'kategori',
         ]);
@@ -139,9 +135,7 @@ class AdminRecipeController extends Controller
         $data = $request->only([
             'nama',
             'deskripsi',
-            'tingkat_kesulitan',
             'waktu_masak',
-            'kalori_per_porsi',
             'region',
             'kategori',
         ]);

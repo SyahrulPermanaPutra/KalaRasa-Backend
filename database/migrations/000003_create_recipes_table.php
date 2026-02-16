@@ -15,9 +15,7 @@ return new class extends Migration
         Schema::create('recipes', function (Blueprint $table) {
             $table->id();
             $table->string('nama', 255);
-            $table->enum('tingkat_kesulitan', ['mudah', 'sedang', 'sulit']);
             $table->integer('waktu_masak')->comment('Waktu dalam menit');
-            $table->integer('kalori_per_porsi');
             $table->string('region', 100)->nullable();
             
             // Kolom tambahan dari migration kedua
@@ -37,7 +35,6 @@ return new class extends Migration
             $table->timestamps();
             
             $table->index('nama');
-            $table->index('tingkat_kesulitan');
             $table->index('waktu_masak');
         });
 

@@ -26,6 +26,7 @@ Route::prefix('recipe')->group(function () {
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
+
 // NLP Python API verification endpoint
 Route::middleware(['api.key'])->group(function () {
     Route::post('/verify-token', [NlpAuthController::class, 'verifyToken']);
@@ -49,6 +50,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Recipe Routes (User)
     Route::prefix('recipe')->group(function () {
+        Route::get('/recipes/create', [RecipeController::class, 'create'])->name('recipes.create');
+        Route::post('/recipes', [RecipeController::class, 'store'])->name('recipes.store');
+        Route::get('/recipes/{recipe}', [RecipeController::class, 'show'])->name('recipes.show');
         Route::post('/{id}/add-to-shopping-list', [RecipeController::class, 'addToShoppingList']);
         Route::post('/{id}/toggle-favorite', [RecipeController::class, 'toggleFavorite']);
         Route::get('/my/favorites', [RecipeController::class, 'myFavorites']);

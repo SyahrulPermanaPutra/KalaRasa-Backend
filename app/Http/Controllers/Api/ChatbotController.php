@@ -295,9 +295,7 @@ class ChatbotController extends Controller
         if (!empty($entities['cuisine'])) {
             $criteria[] = "masakan: " . implode(', ', $entities['cuisine']);
         }
-        if (!empty($entities['difficulty'])) {
-            $criteria[] = "tingkat kesulitan: " . implode(', ', $entities['difficulty']);
-        }
+       
 
         $criteriaText = !empty($criteria) ? " dengan " . implode(", ", $criteria) : "";
 
