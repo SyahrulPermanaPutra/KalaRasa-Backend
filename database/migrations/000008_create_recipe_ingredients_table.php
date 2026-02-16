@@ -16,7 +16,8 @@ return new class extends Migration
             $table->foreignId('recipe_id')->constrained()->onDelete('cascade');
             $table->foreignId('ingredient_id')->constrained()->onDelete('cascade');
             $table->boolean('is_main')->default(false)->comment('TRUE untuk bahan utama, FALSE untuk tambahan');
-            $table->string('jumlah', 50)->nullable()->comment('Contoh: 500 gram, 2 butir, secukupnya');
+            $table->string('jumlah', 50)->nullable()->comment('Hanya angka');
+            $table->string('satuan', 50)->nullable()->comment('Satuan seperti gram, sendok, cangkir, dll');
             $table->timestamps();
             
             $table->unique(['recipe_id', 'ingredient_id'], 'unique_recipe_ingredient');

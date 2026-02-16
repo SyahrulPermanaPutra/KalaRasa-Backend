@@ -48,6 +48,18 @@ class AuthController extends Controller
         ], 201);
     }
 
+    public function verifyToken(Request $request)
+    {
+        return response()->json([
+            'valid' => true,
+            'user' => [
+                'id' => auth()->id(),
+                'name' => auth()->user()->name,
+                'email' => auth()->user()->email,
+            ],
+        ]);
+    }
+
     public function login(Request $request)
     {
         $request->validate([
@@ -90,6 +102,14 @@ class AuthController extends Controller
         ]);
     }
 
+    public function me(Request $request)
+    {
+        return response()->json([
+            'success' => true,
+            'user' => $request->user(),
+        ]);
+    }
+    
     public function profile(Request $request)
     {
         return response()->json([
@@ -108,7 +128,6 @@ class AuthController extends Controller
             'phone' => 'nullable|string|max:20',
             'gender' => 'nullable|in:L,P',
             'birth_date' => 'nullable|date',
-            'avatar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
         ]);
 
         $user->name = $request->name;
@@ -116,31 +135,16 @@ class AuthController extends Controller
         $user->phone = $request->phone;
         $user->gender = $request->gender;
         $user->birth_date = $request->birth_date;
-
-        // Handle avatar upload
-        if ($request->hasFile('avatar')) {
-            // Delete old avatar if exists
-            if ($user->avatar) {
-                Storage::disk('public')->delete($user->avatar);
-            }
-
-            // Store new avatar
-            $avatarPath = $request->file('avatar')->store('avatars', 'public');
-            $user->avatar = $avatarPath;
-        }
-
+        
         $user->save();
 
         return response()->json([
             'success' => true,
-            'message' => 'Profile berhasil diupdate',
+            'message' => 'Profile berhasil diperbarui',
             'data' => $this->formatUserResponse($user)
         ]);
     }
 
-    /**
-     * Format user response dengan avatar URL
-     */
     private function formatUserResponse($user)
     {
         return [
@@ -151,8 +155,6 @@ class AuthController extends Controller
             'phone' => $user->phone,
             'gender' => $user->gender,
             'birth_date' => $user->birth_date,
-            'avatar' => $user->avatar,
-            'avatar_url' => $user->avatar ? Storage::url($user->avatar) : null,
             'email_verified_at' => $user->email_verified_at,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,

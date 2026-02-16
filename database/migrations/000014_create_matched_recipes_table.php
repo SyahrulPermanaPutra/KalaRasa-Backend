@@ -13,13 +13,13 @@ return new class extends Migration
     {
         Schema::create('matched_recipes', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_query_id')->constrained()->onDelete('cascade');
+            $table->foreignId('nlp_logs_id')->constrained()->onDelete('cascade');
             $table->foreignId('recipe_id')->constrained()->onDelete('cascade');
             $table->decimal('match_score', 5, 2);
             $table->integer('rank_position');
             $table->timestamps();
             
-            $table->index('user_query_id');
+            $table->index('nlp_logs_id');
             $table->index('recipe_id');
             $table->index('match_score');
         });

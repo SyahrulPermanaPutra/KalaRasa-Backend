@@ -5,9 +5,11 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ShoppingListController;
 use App\Http\Controllers\Api\Admin\AdminDashboardController;
-use App\Http\Controllers\Api\Admin\AdminResepController;
+use App\Http\Controllers\Api\Admin\AdminRecipeController;
 use App\Http\Controllers\Api\ExpenseController;
-use App\Http\Controllers\Api\ResepController;
+use App\Http\Controllers\API\NLPController;
+use App\Http\Controllers\API\RecipeController;
+use App\Http\Middleware\VerifyApiKey;
 
 /*
 |--------------------------------------------------------------------------
@@ -17,12 +19,13 @@ use App\Http\Controllers\Api\ResepController;
 
 // Public Routes
 Route::prefix('recipe')->group(function () {
-    Route::get('/', [ResepController::class, 'index']);
-    Route::get('/{id}', [ResepController::class, 'show']);
+    Route::get('/', [RecipeController::class, 'index']);
+    Route::get('/{id}', [RecipeController::class, 'show']);
 });
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+
 
 
 // Protected Routes (User & Admin)
@@ -31,14 +34,13 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auth Routes
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
-    Route::put('/profile', [AuthController::class, 'updateProfile']);
-    Route::patch('/profile', [AuthController::class, 'updateProfile']);
-
-    // Resep Routes (User)
+    Route::post('/profile', [AuthController::class, 'updateProfile']);
+    
+    // Recipe Routes (User)
     Route::prefix('recipe')->group(function () {
-        Route::post('/{id}/add-to-shopping-list', [ResepController::class, 'addToShoppingList']);
-        Route::post('/{id}/toggle-favorite', [ResepController::class, 'toggleFavorite']);
-        Route::get('/my/favorites', [ResepController::class, 'myFavorites']);
+        Route::post('/{id}/add-to-shopping-list', [RecipeController::class, 'addToShoppingList']);
+        Route::post('/{id}/toggle-favorite', [RecipeController::class, 'toggleFavorite']);
+        Route::get('/my/favorites', [RecipeController::class, 'myFavorites']);
     });
 
     // Admin Routes
@@ -50,16 +52,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/dashboard/resep-statistics', [AdminDashboardController::class, 'recipetatistics']);
         Route::get('/dashboard/expense-statistics', [AdminDashboardController::class, 'expenseStatistics']);
 
-        // Resep Management
+        // Recipe Management
         Route::prefix('recipe')->group(function () {
-            Route::get('/', [AdminResepController::class, 'index']);
-            Route::post('/', [AdminResepController::class, 'store']);
-            Route::get('/statistics', [AdminResepController::class, 'statistics']);
-            Route::get('/{id}', [AdminResepController::class, 'show']);
-            Route::put('/{id}', [AdminResepController::class, 'update']);
-            Route::delete('/{id}', [AdminResepController::class, 'destroy']);
-            Route::patch('/{id}/approve', [AdminResepController::class, 'approve']);
-            Route::patch('/{id}/reject', [AdminResepController::class, 'reject']);
+            Route::get('/', [AdminRecipeController::class, 'index']);
+            Route::post('/', [AdminRecipeController::class, 'store']);
+            Route::get('/statistics', [AdminRecipeController::class, 'statistics']);
+            Route::get('/{id}', [AdminRecipeController::class, 'show']);
+            Route::put('/{id}', [AdminRecipeController::class, 'update']);
+            Route::delete('/{id}', [AdminRecipeController::class, 'destroy']);
+            Route::patch('/{id}/approve', [AdminRecipeController::class, 'approve']);
+            Route::patch('/{id}/reject', [AdminRecipeController::class, 'reject']);
         });
     });
 });

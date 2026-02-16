@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Resep;
 use Illuminate\Http\Request;
 
-class AdminResepController extends Controller
+class AdminRecipeController extends Controller
 {
     public function index(Request $request)
     {

@@ -7,7 +7,7 @@ use App\Models\Resep;
 use App\Models\ShoppingList;
 use Illuminate\Http\Request;
 
-class ResepController extends Controller
+class RecipeController extends Controller
 {
     public function index(Request $request)
     {
@@ -45,7 +45,7 @@ class ResepController extends Controller
     public function show(Request $request, $id)
     {
         $resep = Resep::approved()->with([
-            'creator:id,name,avatar',
+            'creator:id,name',
             'ingredients:id,nama,kategori'
         ])
         ->findOrFail($id);

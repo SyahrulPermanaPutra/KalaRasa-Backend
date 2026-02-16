@@ -14,7 +14,7 @@ return new class extends Migration
         Schema::create('ingredients', function (Blueprint $table) {
             $table->id();
             $table->string('nama', 100)->unique();
-            $table->enum('kategori', ['protein', 'sayuran', 'karbohidrat', 'bumbu', 'lemak', 'penyedap']);
+            $table->enum('kategori', ['protein Hewani', 'protein Nabati', 'sayuran','buah-buahan', 'karbohidrat', 'bumbu', 'lemak', 'penyedap','pelengkap','minuman']);
             $table->string('sub_kategori', 100)->nullable();
             $table->timestamps();
             
