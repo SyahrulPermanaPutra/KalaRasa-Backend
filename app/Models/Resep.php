@@ -38,6 +38,7 @@ class Resep extends Model
         'view_count'    => 'integer',
     ];
 
+    
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');

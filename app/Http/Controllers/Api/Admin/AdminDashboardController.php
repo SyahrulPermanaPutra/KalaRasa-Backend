@@ -9,13 +9,14 @@ use App\Models\ShoppingList;
 use App\Models\Expense;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
+use App\Models\ShoppingListItem;
 
 class AdminDashboardController extends Controller
 {
     public function index()
     {
         // User Statistics
-        $totalUsers = User::where('role', 'user')->count();
+        $totalUsers = User::where('role', ['user','admin'])->count();
         $newUsersThisMonth = User::where('role', 'user')
             ->whereMonth('created_at', now()->month)
             ->whereYear('created_at', now()->year)
@@ -25,38 +26,52 @@ class AdminDashboardController extends Controller
         $totalReseps = Resep::count();
         $approvedReseps = Resep::approved()->count();
         $pendingReseps = Resep::pending()->count();
+        $rejectedReseps = Resep::rejected()->count();
 
         // Shopping List Statistics
-        $totalShoppingItems = ShoppingList::count();
-        $totalBoughtItems = ShoppingList::sudahDibeli()->count();
+        $totalShoppingLists = ShoppingList::count();
+        $completedLists     = ShoppingList::completed()->count();  // atau sudahDibeli()
+        $pendingLists       = ShoppingList::pending()->count();
+
+        // Item Statistics (alternatif lebih detail)
+        $totalShoppingItems = ShoppingListItem::count();
+        $totalBoughtItems   = ShoppingListItem::where('is_purchased', true)->count();
+        $totalUnboughtItems = ShoppingListItem::where('is_purchased', false)->count();
 
         // Expense Statistics
-        $totalExpensesThisMonth = Expense::whereMonth('tanggal_transaksi', now()->month)
-            ->whereYear('tanggal_transaksi', now()->year)
-            ->sum('total_harga');
-
-        $totalExpensesToday = Expense::today()->sum('total_harga');
+        $totalExpenses = Expense::sum('actual_price');
+        $expensesThisMonth = Expense::whereMonth('purchase_date', now()->month)
+            ->whereYear('purchase_date', now()->year)
+            ->sum('actual_price');
 
         return response()->json([
             'success' => true,
-            'data' => [
+            'message' => 'Dashboard data retrieved successfully',
+            'data'    => [
                 'users' => [
-                    'total' => $totalUsers,
-                    'new_this_month' => $newUsersThisMonth,
+                    'total'             => $totalUsers,
+                    'new_this_month'    => $newUsersThisMonth,
                 ],
                 'reseps' => [
-                    'total' => $totalReseps,
+                    'total'    => $totalReseps,
                     'approved' => $approvedReseps,
-                    'pending' => $pendingReseps,
+                    'pending'  => $pendingReseps,
+                    'rejected' => $rejectedReseps,
                 ],
                 'shopping_lists' => [
-                    'total_items' => $totalShoppingItems,
-                    'bought_items' => $totalBoughtItems,
+                    'total'     => $totalShoppingLists,
+                    'completed' => $completedLists,
+                    'pending'   => $pendingLists,
+                ],
+                'shopping_items' => [
+                    'total'    => $totalShoppingItems,
+                    'bought'   => $totalBoughtItems,
+                    'unbought' => $totalUnboughtItems,
                 ],
                 'expenses' => [
-                    'today' => $totalExpensesToday,
-                    'this_month' => $totalExpensesThisMonth,
-                ]
+                    'total'       => (float) $totalExpenses,
+                    'this_month'  => (float) $expensesThisMonth,
+                ],
             ]
         ]);
     }
