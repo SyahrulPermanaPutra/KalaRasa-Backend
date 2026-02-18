@@ -64,18 +64,19 @@ Route::middleware('auth:sanctum')->group(function () {
         // Dashboard sesuai desain
         Route::get('/dashboard/summary', [AdminDashboardController::class,'summary']);
         Route::get('/recipe-submissions', [AdminDashboardController::class,'recipeSubmissions']);
-        // Route::get('/dashboard', [AdminDashboardController::class, 'index']);
-        // Route::get('/dashboard/recipe-statistics', [AdminDashboardController::class, 'recipeStatistics']);
-        // Route::get('/dashboard/expense-statistics', [AdminDashboardController::class, 'expenseStatistics']);
 
         // Recipe Management
         Route::prefix('recipe')->group(function () {
+            
+            Route::get('/statistics', [AdminRecipeController::class, 'statistics']);    
+        
             Route::get('/', [AdminRecipeController::class, 'index']);
-            Route::post('/', [AdminRecipeController::class, 'store']);
-            Route::get('/statistics', [AdminRecipeController::class, 'statistics']);
             Route::get('/{id}', [AdminRecipeController::class, 'show']);
-            Route::put('/{id}', [AdminRecipeController::class, 'update']);
+
+            Route::post('/', [AdminRecipeController::class, 'store']);
+            Route::post('/{id}', [AdminRecipeController::class, 'update']);
             Route::delete('/{id}', [AdminRecipeController::class, 'destroy']);
+
             Route::patch('/{id}/approve', [AdminRecipeController::class, 'approve']);
             Route::patch('/{id}/reject', [AdminRecipeController::class, 'reject']);
         });

@@ -4,15 +4,16 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Recipe;
+use App\Models\RecipeIngredient;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
-
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 class AdminRecipeController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Recipe::with(['creator', 'approver']);
+        $query = Recipe::with(['creator:id,name,email', 'approver:id,name,email']);
 
         // Filter berdasarkan status
         if ($request->has('status')) {
@@ -66,6 +67,13 @@ class AdminRecipeController extends Controller
             'waktu_masak'        => 'nullable|integer|min:1|max:600',
             'region'             => 'nullable|string|max:100',
             'kategori'           => 'nullable|string|max:100',
+            
+            // Validasi ingredients
+            'ingredients'        => 'nullable|array',
+            'ingredients.*.ingredient_id' => 'required|exists:ingredients,id',
+            'ingredients.*.is_main'       => 'required|boolean',
+            'ingredients.*.jumlah'        => 'required|string|max:100',
+            'ingredients.*.satuan'        => 'nullable|string|max:50',
         ]);
 
         if ($validator->fails()) {
@@ -76,43 +84,76 @@ class AdminRecipeController extends Controller
             ], 422);
         }
 
-        $data = $request->only([
-            'nama',
-            'deskripsi',
-            'waktu_masak',
-            'region',
-            'kategori',
-        ]);
+        try {
+            DB::beginTransaction();
 
-        // sanitasi
-        $data = array_map(fn($v) => is_string($v) ? strip_tags($v) : $v, $data);
+            $data = $request->only([
+                'nama',
+                'deskripsi',
+                'waktu_masak',
+                'region',
+                'kategori',
+            ]);
 
-        // Set data admin
-        $data['created_by']  = $request->user()->id;
-        $data['status']      = 'approved'; // Admin langsung approved
-        $data['approved_by'] = $request->user()->id;
-        $data['approved_at'] = now();
+            // Sanitasi
+            $data = array_map(fn($v) => is_string($v) ? strip_tags($v) : $v, $data);
 
-        // Upload gambar jika ada
-        // if ($request->hasFile('gambar')) {
-        //     $gambarName = time() . '_' . $request->file('gambar')->getClientOriginalName();
-        //     $path = $request->file('gambar')->move(public_path('recipes'), $gambarName);
-        //     $data['gambar'] = 'recipes/' . $gambarName;
-        // }
-        if ($request->hasFile('gambar')) {
-            $path = $request->file('gambar')
-                ->store('recipes', 'public');
+            // Set data admin
+            $data['created_by']  = $request->user()->id;
+            $data['status']      = 'approved'; // Admin langsung approved
+            $data['approved_by'] = $request->user()->id;
+            $data['approved_at'] = now();
 
-            $data['gambar'] = $path;
+            // Upload gambar jika ada
+            if ($request->hasFile('gambar')) {
+                $path = $request->file('gambar')
+                    ->store('recipes', 'public');
+
+                $data['gambar'] = $path;
+            }
+
+            // Buat recipe
+            $recipe = Recipe::create($data);
+
+            // Tambahkan ingredients jika ada
+            if ($request->has('ingredients') && is_array($request->ingredients)) {
+                foreach ($request->ingredients as $ingredientData) {
+                    RecipeIngredient::create([
+                        'recipe_id'     => $recipe->id,
+                        'ingredient_id' => $ingredientData['ingredient_id'],
+                        'is_main'       => $ingredientData['is_main'],
+                        'jumlah'        => strip_tags($ingredientData['jumlah']),
+                        'satuan'        => isset($ingredientData['satuan']) ? strip_tags($ingredientData['satuan']) : null,
+                    ]);
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Resep berhasil ditambahkan',
+                'data'    => $recipe->load([
+                    'creator', 
+                    'approver',
+                    'recipeIngredients.ingredient'
+                ])
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            // Hapus gambar jika sudah terupload
+            if (isset($data['gambar']) && Storage::disk('public')->exists($data['gambar'])) {
+                Storage::disk('public')->delete($data['gambar']);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat menyimpan resep',
+                'error'   => $e->getMessage()
+            ], 500);
         }
-
-        $recipe = Recipe::create($data);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Resep berhasil ditambahkan',
-            'data'    => $recipe->load(['creator', 'approver'])
-        ], 201);
     }
 
     public function show($id)
@@ -129,7 +170,7 @@ class AdminRecipeController extends Controller
         'total_ratings',
         'created_by',
         'approved_by')
-            ->with(['creator', 'approver'])
+            ->with(['creator:id,name,email', 'approver:id,name,email'])
             ->findOrFail($id);
 
         return response()->json([
@@ -141,15 +182,33 @@ class AdminRecipeController extends Controller
 
     public function update(Request $request, $id)
     {
+        // Handle method spoofing untuk form-data
+        if ($request->has('_method') && $request->_method === 'PUT') {
+            $request->setMethod('PUT');
+        }
+        if ($request->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
+        }
+
         $recipe = Recipe::findOrFail($id);
 
         $validator = Validator::make($request->all(), [
-            'nama'               => 'sometimes|required|string|max:255',
-            'deskripsi'          => 'nullable|string',
-            'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-            'waktu_masak'        => 'nullable|integer|min:1',
+            'nama'               => 'required|string|max:150|min:3',
+            'deskripsi'          => 'nullable|string|max:2000',
+            'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2120',
+            'waktu_masak'        => 'nullable|integer|min:1|max:600',
             'region'             => 'nullable|string|max:100',
             'kategori'           => 'nullable|string|max:100',
+            
+            // Validasi ingredients
+            'ingredients'        => 'nullable|array',
+            'ingredients.*.ingredient_id' => 'required|exists:ingredients,id',
+            'ingredients.*.is_main'       => 'required|boolean',
+            'ingredients.*.jumlah'        => 'required|string|max:100',
+            'ingredients.*.satuan'        => 'nullable|string|max:50',
         ]);
 
         if ($validator->fails()) {
@@ -160,50 +219,122 @@ class AdminRecipeController extends Controller
             ], 422);
         }
 
-        $data = $request->only([
-            'nama',
-            'deskripsi',
-            'waktu_masak',
-            'region',
-            'kategori',
-        ]);
+        try {
+            DB::beginTransaction();
 
-        // Upload gambar baru jika ada
-        if ($request->hasFile('gambar')) {
-            // Hapus gambar lama
-            if ($recipe->gambar && file_exists(public_path($recipe->gambar))) {
-                unlink(public_path($recipe->gambar));
+            $data = $request->only([
+                'nama',
+                'deskripsi',
+                'waktu_masak',
+                'region',
+                'kategori',
+            ]);
+
+            // Sanitasi
+            $data = array_map(fn($v) => is_string($v) ? strip_tags($v) : $v, $data);
+
+            // Upload gambar baru jika ada
+            if ($request->hasFile('gambar')) {
+                // Hapus gambar lama dari storage
+                if ($recipe->gambar && Storage::disk('public')->exists($recipe->gambar)) {
+                    Storage::disk('public')->delete($recipe->gambar);
+                }
+
+                $path = $request->file('gambar')->store('recipes', 'public');
+                $data['gambar'] = $path;
             }
 
-            $gambarName = time() . '_' . $request->file('gambar')->getClientOriginalName();
-            $request->file('gambar')->move(public_path('recipes'), $gambarName);
-            $data['gambar'] = 'recipes/' . $gambarName;
+            // Update recipe
+            $recipe->update($data);
+
+            // Update ingredients jika ada
+            if ($request->has('ingredients')) {
+                // Hapus semua ingredients lama
+                RecipeIngredient::where('recipe_id', $recipe->id)->delete();
+
+                // Tambahkan ingredients baru
+                if (is_array($request->ingredients) && count($request->ingredients) > 0) {
+                    foreach ($request->ingredients as $ingredientData) {
+                        RecipeIngredient::create([
+                            'recipe_id'     => $recipe->id,
+                            'ingredient_id' => $ingredientData['ingredient_id'],
+                            'is_main'       => $ingredientData['is_main'],
+                            'jumlah'        => strip_tags($ingredientData['jumlah']),
+                            'satuan'        => isset($ingredientData['satuan']) ? strip_tags($ingredientData['satuan']) : null,
+                        ]);
+                    }
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Resep berhasil diupdate',
+                'data'    => $recipe->fresh()->load([
+                    'creator', 
+                    'approver',
+                    'recipeIngredients.ingredient'
+                ])
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            // Hapus gambar baru jika sudah terupload
+            if (isset($data['gambar']) && Storage::disk('public')->exists($data['gambar'])) {
+                Storage::disk('public')->delete($data['gambar']);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat mengupdate resep',
+                'error'   => $e->getMessage()
+            ], 500);
         }
-
-        $recipe->update($data);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Resep berhasil diupdate',
-            'data'    => $recipe->fresh()->load(['creator', 'approver'])
-        ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
-        $recipe = Recipe::findOrFail($id);
-
-        // Hapus gambar jika ada
-        if ($recipe->gambar && file_exists(public_path($recipe->gambar))) {
-            unlink(public_path($recipe->gambar));
+        if ($request->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
         }
 
-        $recipe->delete();
+        $recipe = Recipe::findOrFail($id);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Resep berhasil dihapus'
-        ]);
+        try {
+            DB::beginTransaction();
+
+            // Hapus semua ingredients terkait
+            RecipeIngredient::where('recipe_id', $recipe->id)->delete();
+
+            // Hapus gambar dari storage jika ada
+            if ($recipe->gambar && Storage::disk('public')->exists($recipe->gambar)) {
+                Storage::disk('public')->delete($recipe->gambar);
+            }
+
+            // Hapus recipe
+            $recipe->delete();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Resep berhasil dihapus'
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan saat menghapus resep',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function approve(Request $request, $id)
@@ -233,6 +364,13 @@ class AdminRecipeController extends Controller
 
     public function reject(Request $request, $id)
     {
+        if ($request->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
+        }
+
         $recipe = Recipe::findOrFail($id);
 
         if ($recipe->status !== 'pending') {
@@ -243,7 +381,7 @@ class AdminRecipeController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'rejection_reason' => 'required|string|min:10',
+            'rejection_reason' => 'required|string|min:10|max:500',
         ], [
             'rejection_reason.required' => 'Alasan penolakan wajib diisi',
             'rejection_reason.min'      => 'Alasan penolakan minimal 10 karakter',
@@ -259,9 +397,9 @@ class AdminRecipeController extends Controller
 
         $recipe->update([
             'status'           => 'rejected',
-            'approved_by'      => $request->user()->id,
-            'approved_at'      => now(),
-            'rejection_reason' => $request->rejection_reason,
+            'approved_by'      => null,  // ← UBAH: tidak perlu set approver untuk reject
+            'approved_at'      => null,  // ← UBAH: tidak perlu set approved_at untuk reject
+            'rejection_reason' => strip_tags($request->rejection_reason),  // ← TAMBAH: sanitasi
         ]);
 
         return response()->json([
