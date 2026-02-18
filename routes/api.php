@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ShoppingListController;
 use App\Http\Controllers\Api\Admin\AdminDashboardController;
 use App\Http\Controllers\Api\Admin\AdminRecipeController;
+use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\ExpenseController;
 use App\Http\Controllers\Api\RecipeController;
 use App\Http\Controllers\Api\ChatbotController;
@@ -55,10 +56,14 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Admin Routes
     Route::prefix('admin')->middleware('admin')->group(function () {        
+        // User Management
+        Route::prefix('user')->group(function () {
+            Route::get('/', [AdminUserController::class, 'index']);               
+            Route::get('/{id}', [AdminUserController::class, 'show']);            
+        });
+
         // Dashboard
         Route::get('/dashboard', [AdminDashboardController::class, 'index']);
-        Route::get('/dashboard/users', [AdminDashboardController::class, 'users']);
-        Route::get('/dashboard/users/{id}', [AdminDashboardController::class, 'userDetail']);
         Route::get('/dashboard/recipe-statistics', [AdminDashboardController::class, 'recipeStatistics']);
         Route::get('/dashboard/expense-statistics', [AdminDashboardController::class, 'expenseStatistics']);
 
