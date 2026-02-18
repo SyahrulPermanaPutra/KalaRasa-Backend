@@ -1,6 +1,5 @@
 <?php
 // app/Services/RecipeClassificationService.php
-
 namespace App\Services;
 
 use App\Models\Ingredient;
@@ -9,25 +8,71 @@ use App\Models\HealthConditionRestriction;
 use App\Models\RecipeSuitability;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class RecipeClassificationService
 {
-    // 🔑 PENTING: Mapping ini akan Anda isi sendiri nanti
+    //  PENTING: Mapping ini akan Anda isi sendiri nanti di Config
     protected array $ingredientMapping = [];
     protected array $ingredientAliases = [];
     protected array $healthRestrictions = [];
+    protected bool $mappingLoaded = false;
 
     /**
      * Normalisasi string untuk case-insensitive & konsistensi
      */
-    protected function normalize(string $text): string
+    public function normalize(string $text): string
     {
         return Str::lower(Str::trim(preg_replace('/\s+/', ' ', $text)));
     }
 
     /**
+     * Setter untuk mapping dengan fallback aman
+     */
+    public function setIngredientMapping(?array $mapping = null): self
+    {
+        if ($mapping === null || empty($mapping)) {
+            Log::warning('Ingredient Mapping config is missing or empty. Using fallback classification.', [
+                'context' => 'RecipeClassificationService',
+                'timestamp' => now()->toIso8601String()
+            ]);
+            $this->ingredientMapping = [];
+            $this->mappingLoaded = false;
+        } else {
+            $this->ingredientMapping = $mapping;
+            $this->mappingLoaded = true;
+        }
+        return $this;
+    }
+
+    public function setIngredientAliases(?array $aliases = null): self
+    {
+        if ($aliases === null || empty($aliases)) {
+            Log::warning('Ingredient Aliases config is missing or empty.', [
+                'context' => 'RecipeClassificationService'
+            ]);
+            $this->ingredientAliases = [];
+        } else {
+            $this->ingredientAliases = $aliases;
+        }
+        return $this;
+    }
+
+    public function setHealthRestrictions(?array $restrictions = null): self
+    {
+        if ($restrictions === null || empty($restrictions)) {
+            Log::warning('Health Restrictions config is missing or empty.', [
+                'context' => 'RecipeClassificationService'
+            ]);
+            $this->healthRestrictions = [];
+        } else {
+            $this->healthRestrictions = $restrictions;
+        }
+        return $this;
+    }
+
+    /**
      * Parse input bahan menjadi komponen terstruktur
-     * Contoh: "500 gram daging sapi" → ['jumlah' => '500', 'satuan' => 'gram', 'nama' => 'daging sapi']
      */
     public function parseIngredient(string $input): array
     {
@@ -55,7 +100,7 @@ class RecipeClassificationService
                 'nama' => $this->normalize($matches[3]),
             ];
         }
-
+        
         // Fallback jika tidak match pola
         return [
             'jumlah' => null,
@@ -64,6 +109,8 @@ class RecipeClassificationService
         ];
     }
 
+
+    
     /**
      * Cari atau buat ingredient dengan case-insensitive matching + alias support
      */
@@ -82,7 +129,6 @@ class RecipeClassificationService
                 // Cari canonical name di database
                 $ingredient = Ingredient::whereRaw('LOWER(nama) = ?', [$canonical])->first();
                 if ($ingredient) return $ingredient;
-                
                 // Jika belum ada, gunakan canonical untuk create
                 $normalizedNama = $canonical;
                 break;
@@ -91,34 +137,47 @@ class RecipeClassificationService
 
         // 3. Tentukan kategori dari mapping
         $kategori = 'bumbu'; // Default fallback
-        $subKategori = null;
-        
-        if (isset($this->ingredientMapping[$normalizedNama])) {
+        $subKategori = 'umum'; // Default ke 'umum' jika tidak ada mapping
+        $usedFallback = true; // Flag untuk tracking apakah menggunakan fallback
+
+        if ($this->mappingLoaded && isset($this->ingredientMapping[$normalizedNama])) {
             $kategori = $this->ingredientMapping[$normalizedNama]['kategori'] ?? 'bumbu';
-            $subKategori = $this->ingredientMapping[$normalizedNama]['sub_kategori'] ?? null;
+            $subKategori = $this->ingredientMapping[$normalizedNama]['sub_kategori'] ?? 'umum';
+            $usedFallback = false;
         } else {
             // Fallback logic untuk kategori berdasarkan keyword
             $kategoriKeywords = [
-                'protein Hewani' => ['daging', 'ayam', 'ikan', 'udang', 'telur', 'sapi', 'kambing', 'beef', 'chicken'],
-                'protein Nabati' => ['tempe', 'tahu', 'kacang', 'kedelai', 'jamur'],
+                'protein' => ['daging', 'ayam', 'ikan', 'udang', 'telur', 'sapi', 'kambing', 'beef', 'chicken', 'tempe', 'tahu', 'kacang', 'kedelai'],
                 'sayuran' => ['bayam', 'wortel', 'kangkung', 'bawang', 'tomat', 'selada', 'timun'],
-                'buah-buahan' => ['pisang', 'apel', 'jeruk', 'mangga', 'alpukat'],
                 'karbohidrat' => ['nasi', 'mie', 'kentang', 'ubi', 'roti', 'gandum'],
-                'bumbu' => ['garam', 'gula', 'merica', 'ketumbar', 'jahe', 'bawang', 'cabe'],
+                'bumbu' => ['garam', 'gula', 'merica', 'ketumbar', 'jahe', 'cabe'],
                 'lemak' => ['minyak', 'mentega', 'margarin', 'santan'],
+                'penyedap' => ['kecap', 'saus', 'terasi', 'micin', 'gula', 'garam'],
             ];
             
             foreach ($kategoriKeywords as $kat => $keywords) {
                 foreach ($keywords as $kw) {
                     if (str_contains($normalizedNama, $kw)) {
                         $kategori = $kat;
+                        $subKategori = 'umum'; // Tetap 'umum' karena dari fallback keyword
                         break 2;
                     }
                 }
             }
         }
 
-        // 4. Buat ingredient baru dengan format nama yang rapi
+        // 4. Log warning jika menggunakan fallback classification
+        if ($usedFallback) {
+            Log::warning('Ingredient classified using fallback (no mapping config).', [
+                'ingredient_name' => $normalizedNama,
+                'assigned_category' => $kategori,
+                'assigned_sub_category' => $subKategori,
+                'context' => 'RecipeClassificationService::findOrCreateIngredient',
+                'timestamp' => now()->toIso8601String()
+            ]);
+        }
+
+        // 5. Buat ingredient baru dengan format nama yang rapi
         return Ingredient::create([
             'nama' => ucwords(str_replace('_', ' ', $normalizedNama)),
             'kategori' => $kategori,
@@ -132,7 +191,7 @@ class RecipeClassificationService
     public function isMainIngredient(string $normalizedNama): bool
     {
         $mainKeywords = [
-            'daging', 'ayam', 'ikan', 'udang', 'tempe', 'tahu', 'nasi', 'mie', 
+            'daging', 'ayam', 'ikan', 'udang', 'tempe', 'tahu', 'nasi', 'mie',
             'kentang', 'telur', 'sapi', 'kambing', 'beef', 'chicken'
         ];
         
@@ -192,23 +251,10 @@ class RecipeClassificationService
     }
 
     /**
-     * Setter untuk mapping (bisa diisi dari config atau database nanti)
+     * Cek apakah mapping sudah dimuat dengan benar
      */
-    public function setIngredientMapping(array $mapping): self
+    public function isMappingLoaded(): bool
     {
-        $this->ingredientMapping = $mapping;
-        return $this;
-    }
-
-    public function setIngredientAliases(array $aliases): self
-    {
-        $this->ingredientAliases = $aliases;
-        return $this;
-    }
-
-    public function setHealthRestrictions(array $restrictions): self
-    {
-        $this->healthRestrictions = $restrictions;
-        return $this;
+        return $this->mappingLoaded;
     }
 }
