@@ -13,9 +13,7 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             UserSeeder::class,
-            CookingMethodSeeder::class,
             IngredientSeeder::class,
-            TasteProfileSeeder::class,
             HealthConditionSeeder::class,
             HealthConditionRestrictionSeeder::class,
             RecipeSeeder::class,

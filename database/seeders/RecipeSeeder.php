@@ -15,9 +15,7 @@ class RecipeSeeder extends Seeder
         // Recipe 1: Ayam Goreng Kremes
         $recipeId = DB::table('recipes')->insertGetId([
             'nama' => 'Ayam Goreng Kremes',
-            'tingkat_kesulitan' => 'mudah',
             'waktu_masak' => 45,
-            'kalori_per_porsi' => 350,
             'region' => 'jawa',
             'created_at' => now(),
             'updated_at' => now(),
@@ -25,17 +23,18 @@ class RecipeSeeder extends Seeder
 
         // Ingredients for Ayam Goreng Kremes
         $this->addRecipeIngredients($recipeId, [
-            ['nama' => 'ayam', 'is_main' => true, 'jumlah' => '500 gram'],
-            ['nama' => 'tepung terigu', 'is_main' => false, 'jumlah' => '100 gram'],
-            ['nama' => 'bawang putih', 'is_main' => false, 'jumlah' => '3 siung'],
-            ['nama' => 'garam', 'is_main' => false, 'jumlah' => 'secukupnya'],
+            ['nama' => 'ayam', 'is_main' => true, 'jumlah' => '500'],
+            ['nama' => 'tepung terigu', 'is_main' => false, 'jumlah' => '100'],
+            ['nama' => 'bawang putih', 'is_main' => false, 'jumlah' => '3'],
+            ['nama' => 'garam', 'is_main' => false, 'jumlah' => '1'],
+            ['nama' => 'merica', 'is_main' => false, 'jumlah' => '1'],
         ]);
 
         // Cooking methods
-        $this->addRecipeCookingMethods($recipeId, ['goreng']);
+        // $this->addRecipeCookingMethods($recipeId, ['goreng']);
 
         // Taste profiles
-        $this->addRecipeTasteProfiles($recipeId, ['gurih', 'asin']);
+        // $this->addRecipeTasteProfiles($recipeId, ['gurih', 'asin']);
 
         // Suitability
         $this->addRecipeSuitability($recipeId, [
@@ -46,9 +45,7 @@ class RecipeSeeder extends Seeder
         // Recipe 2: Tumis Kangkung
         $recipeId = DB::table('recipes')->insertGetId([
             'nama' => 'Tumis Kangkung',
-            'tingkat_kesulitan' => 'mudah',
             'waktu_masak' => 15,
-            'kalori_per_porsi' => 80,
             'region' => 'umum',
             'created_at' => now(),
             'updated_at' => now(),
@@ -56,17 +53,17 @@ class RecipeSeeder extends Seeder
 
         // Ingredients for Tumis Kangkung
         $this->addRecipeIngredients($recipeId, [
-            ['nama' => 'kangkung', 'is_main' => true, 'jumlah' => '2 ikat'],
-            ['nama' => 'bawang putih', 'is_main' => false, 'jumlah' => '3 siung'],
-            ['nama' => 'cabai', 'is_main' => false, 'jumlah' => '2 buah'],
-            ['nama' => 'terasi', 'is_main' => false, 'jumlah' => 'secukupnya'],
+            ['nama' => 'kangkung', 'is_main' => true, 'jumlah' => '2'],
+            ['nama' => 'bawang putih', 'is_main' => false, 'jumlah' => '3'],
+            ['nama' => 'cabai', 'is_main' => false, 'jumlah' => '2'],
+            ['nama' => 'terasi', 'is_main' => false, 'jumlah' => '1'],
         ]);
 
         // Cooking methods
-        $this->addRecipeCookingMethods($recipeId, ['tumis']);
+        // $this->addRecipeCookingMethods($recipeId, ['tumis']);
 
         // Taste profiles
-        $this->addRecipeTasteProfiles($recipeId, ['gurih', 'pedas']);
+        // $this->addRecipeTasteProfiles($recipeId, ['gurih', 'pedas']);
 
         // Suitability
         $this->addRecipeSuitability($recipeId, [
@@ -80,9 +77,7 @@ class RecipeSeeder extends Seeder
         // Recipe 3: Pepes Ikan
         $recipeId = DB::table('recipes')->insertGetId([
             'nama' => 'Pepes Ikan',
-            'tingkat_kesulitan' => 'sedang',
             'waktu_masak' => 40,
-            'kalori_per_porsi' => 180,
             'region' => 'sunda',
             'created_at' => now(),
             'updated_at' => now(),
@@ -90,19 +85,19 @@ class RecipeSeeder extends Seeder
 
         // Ingredients for Pepes Ikan
         $this->addRecipeIngredients($recipeId, [
-            ['nama' => 'ikan', 'is_main' => true, 'jumlah' => '500 gram'],
-            ['nama' => 'bawang merah', 'is_main' => false, 'jumlah' => '4 siung'],
-            ['nama' => 'bawang putih', 'is_main' => false, 'jumlah' => '2 siung'],
-            ['nama' => 'cabai', 'is_main' => false, 'jumlah' => '5 buah'],
-            ['nama' => 'tomat', 'is_main' => false, 'jumlah' => '1 buah'],
-            ['nama' => 'kemangi', 'is_main' => false, 'jumlah' => 'secukupnya'],
+            ['nama' => 'ikan', 'is_main' => true, 'jumlah' => '500'],
+            ['nama' => 'bawang merah', 'is_main' => false, 'jumlah' => '4'],
+            ['nama' => 'bawang putih', 'is_main' => false, 'jumlah' => '2'],
+            ['nama' => 'cabai', 'is_main' => false, 'jumlah' => '5'],
+            ['nama' => 'tomat', 'is_main' => false, 'jumlah' => '1'],
+            ['nama' => 'kemangi', 'is_main' => false, 'jumlah' => '4'],
         ]);
 
         // Cooking methods
-        $this->addRecipeCookingMethods($recipeId, ['kukus', 'pepes']);
+        // $this->addRecipeCookingMethods($recipeId, ['kukus', 'pepes']);
 
         // Taste profiles
-        $this->addRecipeTasteProfiles($recipeId, ['gurih', 'segar']);
+        // $this->addRecipeTasteProfiles($recipeId, ['gurih', 'segar']);
 
         // Suitability
         $this->addRecipeSuitability($recipeId, [
@@ -139,44 +134,44 @@ class RecipeSeeder extends Seeder
     /**
      * Helper method to add recipe cooking methods
      */
-    private function addRecipeCookingMethods(int $recipeId, array $methods): void
-    {
-        foreach ($methods as $methodName) {
-            $methodId = DB::table('cooking_methods')
-                ->where('nama', $methodName)
-                ->value('id');
+    // private function addRecipeCookingMethods(int $recipeId, array $methods): void
+    // {
+    //     foreach ($methods as $methodName) {
+    //         $methodId = DB::table('cooking_methods')
+    //             ->where('nama', $methodName)
+    //             ->value('id');
 
-            if ($methodId) {
-                DB::table('recipe_cooking_methods')->insert([
-                    'recipe_id' => $recipeId,
-                    'cooking_method_id' => $methodId,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-        }
-    }
+    //         if ($methodId) {
+    //             DB::table('recipe_cooking_methods')->insert([
+    //                 'recipe_id' => $recipeId,
+    //                 'cooking_method_id' => $methodId,
+    //                 'created_at' => now(),
+    //                 'updated_at' => now(),
+    //             ]);
+    //         }
+    //     }
+    // }
 
     /**
      * Helper method to add recipe taste profiles
      */
-    private function addRecipeTasteProfiles(int $recipeId, array $tastes): void
-    {
-        foreach ($tastes as $tasteName) {
-            $tasteId = DB::table('taste_profiles')
-                ->where('nama', $tasteName)
-                ->value('id');
+    // private function addRecipeTasteProfiles(int $recipeId, array $tastes): void
+    // {
+    //     foreach ($tastes as $tasteName) {
+    //         $tasteId = DB::table('taste_profiles')
+    //             ->where('nama', $tasteName)
+    //             ->value('id');
 
-            if ($tasteId) {
-                DB::table('recipe_taste_profiles')->insert([
-                    'recipe_id' => $recipeId,
-                    'taste_profile_id' => $tasteId,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-        }
-    }
+    //         if ($tasteId) {
+    //             DB::table('recipe_taste_profiles')->insert([
+    //                 'recipe_id' => $recipeId,
+    //                 'taste_profile_id' => $tasteId,
+    //                 'created_at' => now(),
+    //                 'updated_at' => now(),
+    //             ]);
+    //         }
+    //     }
+    // }
 
     /**
      * Helper method to add recipe suitability

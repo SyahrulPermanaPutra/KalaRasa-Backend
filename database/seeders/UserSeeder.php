@@ -17,7 +17,6 @@ class UserSeeder extends Seeder
             'password' => Hash::make('password123'),
             'role' => 'admin',
             'phone' => '081234567890',
-            'address' => 'Surabaya, Jawa Timur',
         ]);
 
         // Create Regular Users
@@ -27,7 +26,6 @@ class UserSeeder extends Seeder
             'password' => Hash::make('password123'),
             'role' => 'user',
             'phone' => '081234567891',
-            'address' => 'Surabaya, Jawa Timur',
         ]);
 
         User::create([
@@ -36,7 +34,6 @@ class UserSeeder extends Seeder
             'password' => Hash::make('password123'),
             'role' => 'user',
             'phone' => '081234567892',
-            'address' => 'Sidoarjo, Jawa Timur',
         ]);
 
         User::create([
@@ -45,7 +42,6 @@ class UserSeeder extends Seeder
             'password' => Hash::make('password123'),
             'role' => 'user',
             'phone' => '081234567893',
-            'address' => 'Gresik, Jawa Timur',
         ]);
     }
 }
