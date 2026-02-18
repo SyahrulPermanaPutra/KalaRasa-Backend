@@ -41,7 +41,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/message', [ChatbotController::class, 'processMessage']);
         Route::get('/history', [ChatbotController::class, 'getHistory']);
         Route::get('/health', [ChatbotController::class, 'checkNLPHealth']);
-        Route::post('/clear-context', [ChatbotController::class, 'clearContext']);
     });
 
     // Recipe Routes (User)

@@ -20,21 +20,27 @@ class StoreRecipeRequest extends FormRequest
             'waktu_masak' => 'required|integer|min:1|max:1440',
             'region' => 'nullable|string|max:100',
             'deskripsi' => 'required|string',
-            'gambar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
             'kategori' => 'required|string|max:255',
-            'status' => ['required', Rule::in(['pending', 'approved', 'rejected'])],
-            'jumlah' => 'required|array|min:1',
-            'satuan.*' => 'required|string|regex:/^[\d\s\w\.\-]+(gram|kg|ml|l|sendok|siung|buah|lembar|batang|cangkir|sdt|sdm|pcs)?.*$/i',
+            'gambar' => 'required|image|mimes:jpeg,png,jpg,gif|max:1024',
+            'bahan_bahan' => 'required|array|min:1',
+            'bahan_bahan.*.nama' => 'required|string|max:100',
+            'bahan_bahan.*.jumlah' => 'required|numeric|min:0',
+            'bahan_bahan.*.satuan' => 'required|string|max:50',
             'langkah_langkah' => 'nullable|array',
-            'langkah_langkah.*' => 'nullable|string',
+            'langkah_langkah.*' => 'required|string',
         ];
     }
 
-    public function messages(): array
+     public function messages()
     {
         return [
-            'bahan_bahan.required' => 'Minimal harus ada 1 bahan',
-            'bahan_bahan.*.regex' => 'Format bahan tidak valid. Contoh: "500 gram daging sapi"',
+            'gambar.required' => 'Gambar resep wajib diunggah.',
+            'gambar.image' => 'File harus berupa gambar.',
+            'gambar.max' => 'Ukuran gambar tidak boleh lebih dari 1MB.',
+            'bahan_bahan.required' => 'Minimal satu bahan harus ditambahkan.',
+            'bahan_bahan.*.nama.required' => 'Nama bahan wajib diisi.',
+            'bahan_bahan.*.jumlah.required' => 'Jumlah bahan wajib diisi.',
+            'bahan_bahan.*.satuan.required' => 'Satuan bahan wajib diisi.',
         ];
     }
 }
