@@ -35,8 +35,5 @@ return [
     |--------------------------------------------------------------------------
     */
 
-    'recipe_chatbot' => [
-        'api_url' => env('RECIPE_CHATBOT_API_URL', 'http://localhost:5000'),
-    ],
 
 ];

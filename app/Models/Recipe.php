@@ -87,27 +87,20 @@ class Recipe extends Model
     /**
      * Get the recipe ingredients relationship
      */
+    // Di dalam class Recipe
     public function recipeIngredients()
     {
-        return $this->hasMany(RecipeIngredient::class);
+        return $this->hasMany(RecipeIngredient::class, 'recipe_id');
     }
 
     /**
      * Get the health condition suitabilities for this recipe
      */
-    public function suitabilities()
+    public function recipeSuitability()
     {
-        return $this->hasMany(RecipeSuitability::class);
+        return $this->hasMany(RecipeSuitability::class, 'recipe_id');
     }
 
-    /**
-     * Get the taste profiles for this recipe
-     */
-    public function tasteProfiles()
-    {
-        return $this->belongsToMany(TasteProfile::class, 'recipe_taste_profiles')
-                    ->withTimestamps();
-    }
 
     /**
      * Get the shopping lists for this recipe

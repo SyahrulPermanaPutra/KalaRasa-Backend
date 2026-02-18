@@ -5,10 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use App\Models\Recipe;
-use App\Models\ChatHistory;
+use App\Models\Ingredient;
+use App\Models\UserQuery; // Model untuk tabel user_queries
+use Illuminate\Support\Facades\DB;
 
 class ChatbotController extends Controller
 {
@@ -34,8 +35,8 @@ class ChatbotController extends Controller
         $message = $request->input('message');
 
         try {
-            // Step 1: Send to NLP Python API
-            $nlpResult = $this->sendToNLP($message, $user->id);
+            // Step 1: Send to NLP Python/Flask API
+            $nlpResult = $this->sendToNLP($message);
 
             if (!$nlpResult['success']) {
                 return response()->json([
@@ -45,26 +46,26 @@ class ChatbotController extends Controller
                 ], 500);
             }
 
-            // Step 2: Save chat history
-            $this->saveChatHistory($user->id, $message, $nlpResult);
+            // Step 2: Save chat history to user_queries table
+            $this->saveUserQuery($user->id, $message, $nlpResult);
 
             // Step 3: Check if clarification needed
-            if ($nlpResult['needs_clarification']) {
+            if ($nlpResult['needs_clarification'] ?? false) {
                 return response()->json([
                     'success' => true,
                     'type' => 'clarification',
-                    'message' => $nlpResult['clarification_question'],
-                    'nlp_data' => $nlpResult['nlp_result'],
+                    'message' => $nlpResult['clarification_question'] ?? 'Mohon lengkapi informasi Anda.',
+                    'nlp_data' => $nlpResult,
                     'recipes' => []
                 ]);
             }
 
             // Step 4: Match recipes based on NLP entities
-            $recipes = $this->matchRecipes($nlpResult['nlp_result']);
+            $recipes = $this->matchRecipes($nlpResult);
 
             // Step 5: Generate response message
             $responseMessage = $this->generateResponseMessage(
-                $nlpResult['nlp_result'],
+                $nlpResult['nlp_result'] ?? [],
                 $recipes
             );
 
@@ -72,14 +73,14 @@ class ChatbotController extends Controller
                 'success' => true,
                 'type' => 'recipe_match',
                 'message' => $responseMessage,
-                'nlp_data' => $nlpResult['nlp_result'],
+                'nlp_data' => $nlpResult,
                 'recipes' => $recipes,
                 'context' => $nlpResult['context_summary'] ?? null
             ]);
 
         } catch (\Exception $e) {
             Log::error('Chatbot Error: ' . $e->getMessage(), [
-                'user_id' => $user->id,
+                'user_id' => $user->id ?? null,
                 'message' => $message,
                 'trace' => $e->getTraceAsString()
             ]);
@@ -101,12 +102,23 @@ class ChatbotController extends Controller
         $user = $request->user();
         $limit = $request->input('limit', 50);
 
-        $history = ChatHistory::where('user_id', $user->id)
+        $history = UserQuery::where('user_id', $user->id)
             ->orderBy('created_at', 'desc')
             ->limit($limit)
             ->get()
             ->reverse()
-            ->values();
+            ->values()
+            ->map(function($query) {
+                return [
+                    'id' => $query->id,
+                    'message' => $query->query_text,
+                    'intent' => $query->intent,
+                    'confidence' => $query->confidence,
+                    'status' => $query->status,
+                    'entities' => json_decode($query->entities ?? '[]', true),
+                    'created_at' => $query->created_at,
+                ];
+            });
 
         return response()->json([
             'success' => true,
@@ -115,171 +127,151 @@ class ChatbotController extends Controller
     }
 
     /**
-     * Clear chat context
-     * POST /api/chatbot/clear-context
+     * Check NLP service health
+     * GET /api/chatbot/health
      */
-    public function clearContext(Request $request)
-    {
-        $user = $request->user();
-
-        try {
-            // Clear NLP context
-            $response = Http::withHeaders([
-                'Authorization' => 'Bearer ' . $user->currentAccessToken()->token,
-            ])->timeout($this->nlpTimeout)
-              ->post("{$this->nlpApiUrl}/api/nlp/context/{$user->id}/clear");
-
-            if ($response->successful()) {
-                // Clear local chat history (optional)
-                // ChatHistory::where('user_id', $user->id)->delete();
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Chat context cleared successfully'
-                ]);
-            }
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Failed to clear context'
-            ], 500);
-
-        } catch (\Exception $e) {
-            Log::error('Clear Context Error: ' . $e->getMessage());
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'An error occurred clearing context'
-            ], 500);
-        }
-    }
-
-    // ================================================
-    // PRIVATE HELPER METHODS
-    // ================================================
-
-    /**
-     * Send message to NLP Python API
-     */
-    private function sendToNLP(string $message, int $userId)
+    public function checkNLPHealth()
     {
         try {
-            $user = \App\Models\User::find($userId);
-            $token = $user->currentAccessToken()->token;
-
             $response = Http::withHeaders([
-                'Authorization' => 'Bearer ' . $token,
-                'Content-Type' => 'application/json',
-            ])->timeout($this->nlpTimeout)
-              ->post("{$this->nlpApiUrl}/api/nlp/process", [
-                  'message' => $message
-              ]);
+                'X-Internal-Key' => env('NLP_SERVICE_KEY'),
+            ])->timeout(10)->get("{$this->nlpApiUrl}/health");
 
-            if ($response->successful()) {
-                return $response->json();
-            }
-
-            Log::error('NLP API Error', [
-                'status' => $response->status(),
-                'body' => $response->body()
+            return response()->json([
+                'success' => true,
+                'nlp_status' => $response->json()
             ]);
-
-            return [
-                'success' => false,
-                'error' => 'NLP service unavailable'
-            ];
-
         } catch (\Exception $e) {
-            Log::error('NLP Connection Error: ' . $e->getMessage());
-            
-            return [
+            return response()->json([
                 'success' => false,
-                'error' => 'Cannot connect to NLP service'
-            ];
+                'nlp_status' => ['error' => 'Service unreachable']
+            ], 503);
         }
     }
 
     /**
-     * Match recipes based on NLP entities
+     * Send message to NLP Python/Flask API
+     */
+    private function sendToNLP(string $message): array
+        {
+            try {
+                $response = Http::withHeaders([
+                    'X-Internal-Key' => env('NLP_SERVICE_KEY'),
+                    'Content-Type' => 'application/json',
+                ])
+                ->timeout($this->nlpTimeout)
+                ->post("{$this->nlpApiUrl}/api/nlp/process", [
+                    'message' => $message
+                ]);
+
+                if ($response->successful()) {
+                    return $response->json();
+                }
+
+                Log::error('NLP API Error', [
+                    'status' => $response->status(),
+                    'body' => $response->body()
+                ]);
+
+                return [
+                    'success' => false,
+                    'error' => 'NLP service unavailable'
+                ];
+
+            } catch (\Exception $e) {
+                Log::error('NLP Connection Error: ' . $e->getMessage());
+
+                return [
+                    'success' => false,
+                    'error' => 'Cannot connect to NLP service'
+                ];
+            }
+        }
+    /**
+     * Match recipes based on NLP entities - Sesuai schema database Anda
      */
     private function matchRecipes(array $nlpResult)
     {
-        $entities = $nlpResult['entities'] ?? [];
-        $intent = $nlpResult['intent'] ?? 'search_recipe';
+        $nlpData = $nlpResult['nlp_result'] ?? [];
+        $entities = $nlpData['entities'] ?? [];
+        $intent = $nlpData['intent'] ?? 'search_recipe';
 
-        $query = Recipe::query()->where('status', 'published');
+        // Mulai query dengan status approved (bukan published)
+        $query = Recipe::query()
+            ->where('status', 'approved')
+            ->with(['recipeIngredients.ingredient']);
 
-        // Match by ingredients
-        if (!empty($entities['ingredients'])) {
+        // Match by ingredients (melalui pivot table recipe_ingredients)
+        if (!empty($entities['ingredients']) && is_array($entities['ingredients'])) {
             $ingredients = $entities['ingredients'];
             
-            $query->where(function($q) use ($ingredients) {
-                foreach ($ingredients as $ingredient) {
-                    $q->orWhereJsonContains('ingredients', ['name' => $ingredient])
-                      ->orWhere('ingredients', 'like', "%{$ingredient}%");
-                }
+            $query->whereHas('recipeIngredients', function($q) use ($ingredients) {
+                $q->whereHas('ingredient', function($q2) use ($ingredients) {
+                    foreach ($ingredients as $ingredient) {
+                        $q2->orWhere('ingredients.nama', 'LIKE', "%{$ingredient}%");
+                    }
+                });
             });
         }
 
-        // Match by cuisine
-        if (!empty($entities['cuisine'])) {
-            $query->whereIn('cuisine_type', $entities['cuisine']);
+        // Match by region/cuisine (kolom: region)
+        if (!empty($entities['cuisine']) && is_array($entities['cuisine'])) {
+            $query->whereIn('region', $entities['cuisine']);
         }
 
-        // Match by dietary restrictions
-        if (!empty($entities['dietary'])) {
-            foreach ($entities['dietary'] as $diet) {
-                $query->whereJsonContains('dietary_tags', $diet);
-            }
+        // Match by dietary/health conditions (melalui recipe_suitability)
+        if (!empty($entities['dietary']) && is_array($entities['dietary'])) {
+            $query->whereHas('recipeSuitability', function($q) use ($entities) {
+                $q->whereHas('healthCondition', function($q2) use ($entities) {
+                    foreach ($entities['dietary'] as $diet) {
+                        $q2->orWhere('health_conditions.nama', 'LIKE', "%{$diet}%");
+                    }
+                })->where('recipe_suitability.is_suitable', true);
+            });
         }
 
-        // Match by cooking time
-        if (!empty($entities['time'])) {
+        // Match by cooking time (kolom: waktu_masak)
+        if (!empty($entities['time']) && is_array($entities['time'])) {
             $time = $entities['time'][0];
             if (is_numeric($time)) {
-                $query->where('cooking_time', '<=', (int)$time);
+                $query->where('waktu_masak', '<=', (int)$time);
             }
         }
 
-        // Match by difficulty
-        if (!empty($entities['difficulty'])) {
-            $query->whereIn('difficulty_level', $entities['difficulty']);
+        // Match by category (kolom: kategori)
+        if (!empty($entities['meal_type']) && is_array($entities['meal_type'])) {
+            $query->whereIn('kategori', $entities['meal_type']);
         }
 
-        // Match by meal type
-        if (!empty($entities['meal_type'])) {
-            $query->whereIn('meal_type', $entities['meal_type']);
-        }
+        // Execute query dengan limit
+        $recipes = $query->limit(10)->get()->map(function($recipe) {
+            // Ambil list nama bahan dari pivot table
+            $ingredientsList = $recipe->recipeIngredients->map(function($ri) {
+                return $ri->ingredient->nama ?? null;
+            })->filter()->values()->toArray();
 
-        // Execute query with limit
-        $recipes = $query->with(['user:id,name', 'category:id,name'])
-            ->limit(10)
-            ->get()
-            ->map(function($recipe) {
-                return [
-                    'id' => $recipe->id,
-                    'title' => $recipe->title,
-                    'description' => $recipe->description,
-                    'image_url' => $recipe->image_url,
-                    'cuisine_type' => $recipe->cuisine_type,
-                    'difficulty_level' => $recipe->difficulty_level,
-                    'cooking_time' => $recipe->cooking_time,
-                    'servings' => $recipe->servings,
-                    'rating' => $recipe->rating,
-                    'author' => $recipe->user->name ?? 'Unknown',
-                    'category' => $recipe->category->name ?? 'Uncategorized',
-                ];
-            });
+            return [
+                'id' => $recipe->id,
+                'title' => $recipe->nama,              
+                'description' => $recipe->deskripsi,    
+                'image_url' => $recipe->gambar,         
+                'cuisine_type' => $recipe->region,      
+                'cooking_time' => $recipe->waktu_masak, 
+                'category' => $recipe->kategori,        
+                'rating' => floatval($recipe->avg_rating), 
+                'ingredients' => $ingredientsList,      
+                'author' => 'Kala Rasa',               
+            ];
+        });
 
         return $recipes;
     }
 
     /**
-     * Generate response message
+     * Generate response message dalam Bahasa Indonesia
      */
-    private function generateResponseMessage(array $nlpResult, $recipes)
+    private function generateResponseMessage(array $nlpResult, $recipes): string
     {
-        $intent = $nlpResult['intent'] ?? 'search_recipe';
         $recipeCount = count($recipes);
 
         if ($recipeCount === 0) {
@@ -289,13 +281,15 @@ class ChatbotController extends Controller
         $entities = $nlpResult['entities'] ?? [];
         $criteria = [];
 
-        if (!empty($entities['ingredients'])) {
+        if (!empty($entities['ingredients']) && is_array($entities['ingredients'])) {
             $criteria[] = "bahan: " . implode(', ', $entities['ingredients']);
         }
-        if (!empty($entities['cuisine'])) {
-            $criteria[] = "masakan: " . implode(', ', $entities['cuisine']);
+        if (!empty($entities['cuisine']) && is_array($entities['cuisine'])) {
+            $criteria[] = "region: " . implode(', ', $entities['cuisine']);
         }
-       
+        if (!empty($entities['time']) && is_array($entities['time'])) {
+            $criteria[] = "waktu masak ≤ {$entities['time'][0]} menit";
+        }
 
         $criteriaText = !empty($criteria) ? " dengan " . implode(", ", $criteria) : "";
 
@@ -307,16 +301,27 @@ class ChatbotController extends Controller
     }
 
     /**
-     * Save chat history
+     * Save chat history to user_queries table (bukan chat_histories)
      */
-    private function saveChatHistory(int $userId, string $message, array $nlpResult)
+    private function saveUserQuery(int $userId, string $message, array $nlpResult): void
     {
-        ChatHistory::create([
+        $nlpData = $nlpResult['nlp_result'] ?? [];
+        
+        // Map status dari Flask API ke enum database
+        $action = $nlpData['action'] ?? '';
+        $status = match($action) {
+            'ask_clarification' => 'clarification',
+            'fallback' => 'fallback',
+            default => 'ok'
+        };
+
+        UserQuery::create([
             'user_id' => $userId,
-            'message' => $message,
-            'intent' => $nlpResult['nlp_result']['intent'] ?? null,
-            'entities' => json_encode($nlpResult['nlp_result']['entities'] ?? []),
-            'response_type' => $nlpResult['needs_clarification'] ? 'clarification' : 'recipe_match',
+            'query_text' => $message,
+            'intent' => $nlpData['intent'] ?? null,
+            'confidence' => $nlpData['confidence'] ?? null,
+            'status' => $status, // enum: ok, fallback, clarification
+            'entities' => json_encode($nlpData['entities'] ?? [], JSON_UNESCAPED_UNICODE),
         ]);
     }
 }

@@ -26,12 +26,6 @@ Route::prefix('recipe')->group(function () {
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 
-
-// NLP Python API verification endpoint
-Route::middleware(['api.key'])->group(function () {
-    Route::post('/verify-token', [NlpAuthController::class, 'verifyToken']);
-});
-
 // Protected Routes (User & Admin)
 Route::middleware('auth:sanctum')->group(function () {
     
@@ -45,6 +39,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('chatbot')->group(function () {
         Route::post('/message', [ChatbotController::class, 'processMessage']);
         Route::get('/history', [ChatbotController::class, 'getHistory']);
+        Route::get('/health', [ChatbotController::class, 'checkNLPHealth']);
         Route::post('/clear-context', [ChatbotController::class, 'clearContext']);
     });
 

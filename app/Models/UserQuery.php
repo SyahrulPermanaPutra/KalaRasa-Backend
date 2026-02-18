@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class ChatHistory extends Model
+class UserQuery extends Model
 {
     use HasFactory;
 
@@ -32,5 +32,10 @@ class ChatHistory extends Model
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function matchedRecipes()
+    {
+        return $this->hasMany(MatchedRecipe::class);
     }
 }
