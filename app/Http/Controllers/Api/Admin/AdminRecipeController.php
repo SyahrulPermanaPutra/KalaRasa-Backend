@@ -52,11 +52,18 @@ class AdminRecipeController extends Controller
 
     public function store(Request $request)
     {
+        if ($request->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
+        }
+
         $validator = Validator::make($request->all(), [
-            'nama'               => 'required|string|max:255',
-            'deskripsi'          => 'nullable|string',
-            'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:5120',
-            'waktu_masak'        => 'nullable|integer|min:1',
+            'nama'               => 'required|string|max:150|min:3',
+            'deskripsi'          => 'nullable|string|max:2000',
+            'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2120',
+            'waktu_masak'        => 'nullable|integer|min:1|max:600',
             'region'             => 'nullable|string|max:100',
             'kategori'           => 'nullable|string|max:100',
         ]);
@@ -77,6 +84,9 @@ class AdminRecipeController extends Controller
             'kategori',
         ]);
 
+        // sanitasi
+        $data = array_map(fn($v) => is_string($v) ? strip_tags($v) : $v, $data);
+
         // Set data admin
         $data['created_by']  = $request->user()->id;
         $data['status']      = 'approved'; // Admin langsung approved
@@ -84,10 +94,16 @@ class AdminRecipeController extends Controller
         $data['approved_at'] = now();
 
         // Upload gambar jika ada
+        // if ($request->hasFile('gambar')) {
+        //     $gambarName = time() . '_' . $request->file('gambar')->getClientOriginalName();
+        //     $path = $request->file('gambar')->move(public_path('recipes'), $gambarName);
+        //     $data['gambar'] = 'recipes/' . $gambarName;
+        // }
         if ($request->hasFile('gambar')) {
-            $gambarName = time() . '_' . $request->file('gambar')->getClientOriginalName();
-            $path = $request->file('gambar')->move(public_path('recipes'), $gambarName);
-            $data['gambar'] = 'recipes/' . $gambarName;
+            $path = $request->file('gambar')
+                ->store('recipes', 'public');
+
+            $data['gambar'] = $path;
         }
 
         $recipe = Recipe::create($data);
@@ -101,7 +117,19 @@ class AdminRecipeController extends Controller
 
     public function show($id)
     {
-        $recipe = Recipe::with(['creator', 'approver', 'favoritedBy', 'ratings'])
+        $recipe = Recipe::select(
+        'id', 
+        'nama',
+        'waktu_masak',
+        'region',
+        'deskripsi',
+        'gambar',
+        'kategori',
+        'status',
+        'total_ratings',
+        'created_by',
+        'approved_by')
+            ->with(['creator', 'approver'])
             ->findOrFail($id);
 
         return response()->json([
