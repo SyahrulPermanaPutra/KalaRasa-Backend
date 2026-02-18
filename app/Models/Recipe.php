@@ -101,7 +101,6 @@ class Recipe extends Model
         return $this->hasMany(RecipeSuitability::class, 'recipe_id');
     }
 
-
     /**
      * Get the shopping lists for this recipe
      */
