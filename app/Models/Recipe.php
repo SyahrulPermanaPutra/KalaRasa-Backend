@@ -102,12 +102,13 @@ class Recipe extends Model
 
     /**
      * Get the taste profiles for this recipe
+     * dihapus karena belum ada tabel taste_profiles dan recipe_taste_profiles, bisa ditambahkan nanti jika fitur ini dibutuhkan
      */
-    public function tasteProfiles()
-    {
-        return $this->belongsToMany(TasteProfile::class, 'recipe_taste_profiles')
-                    ->withTimestamps();
-    }
+    // public function tasteProfiles()
+    // {
+    //     return $this->belongsToMany(TasteProfile::class, 'recipe_taste_profiles')
+    //                 ->withTimestamps();
+    // }
 
     /**
      * Get the shopping lists for this recipe
