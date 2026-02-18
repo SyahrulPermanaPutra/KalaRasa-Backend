@@ -62,10 +62,12 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/{id}', [AdminUserController::class, 'show']);            
         });
 
-        // Dashboard
-        Route::get('/dashboard', [AdminDashboardController::class, 'index']);
-        Route::get('/dashboard/recipe-statistics', [AdminDashboardController::class, 'recipeStatistics']);
-        Route::get('/dashboard/expense-statistics', [AdminDashboardController::class, 'expenseStatistics']);
+        // Dashboard sesuai desain
+        Route::get('/dashboard/summary', [AdminDashboardController::class,'summary']);
+        Route::get('/recipe-submissions', [AdminDashboardController::class,'recipeSubmissions']);
+        // Route::get('/dashboard', [AdminDashboardController::class, 'index']);
+        // Route::get('/dashboard/recipe-statistics', [AdminDashboardController::class, 'recipeStatistics']);
+        // Route::get('/dashboard/expense-statistics', [AdminDashboardController::class, 'expenseStatistics']);
 
         // Recipe Management
         Route::prefix('recipe')->group(function () {
