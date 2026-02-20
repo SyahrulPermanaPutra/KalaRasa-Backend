@@ -27,17 +27,34 @@ class FortifyServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Override RegisteredUserController to prevent auto login after registration
+        $this->app->extend(\Laravel\Fortify\Http\Controllers\RegisteredUserController::class, function ($controller, $app) {
+            return new class($app[\Illuminate\Contracts\Auth\StatefulGuard::class]) extends \Laravel\Fortify\Http\Controllers\RegisteredUserController {
+                public function store(\Illuminate\Http\Request $request, \Laravel\Fortify\Contracts\CreatesNewUsers $creator): \Laravel\Fortify\Contracts\RegisterResponse
+                {
+                    if (config('fortify.lowercase_usernames') && $request->has(\Laravel\Fortify\Fortify::username())) {
+                        $request->merge([
+                            \Laravel\Fortify\Fortify::username() => \Illuminate\Support\Str::lower($request->{\Laravel\Fortify\Fortify::username()}),
+                        ]);
+                    }
+                    event(new \Illuminate\Auth\Events\Registered($user = $creator->create($request->all())));
+                    // Do NOT login user here! Jangan regenerate session!
+                    return app(\Laravel\Fortify\Contracts\RegisterResponse::class);
+                }
+            };
+        });
+
         $this->configureActions();
         $this->configureViews();
         $this->configureRateLimiting();
 
-        // Redirect ke halaman sukses setelah register TANPA login otomatis
+        // Set flag session setelah register, dan pastikan user tidak auto login
         \Event::listen(\Laravel\Fortify\Events\Registered::class, function ($event) {
             // Logout user jika sudah login otomatis oleh Fortify
             if (auth()->check()) {
                 auth()->logout();
             }
-            // Redirect ke halaman sukses
+            // Set flag session untuk akses satu kali halaman sukses
             session(['register_success' => true]);
         });
     }

@@ -11,3 +11,6 @@ Route::view('dashboard', 'dashboard')
     ->name('dashboard');
 
 require __DIR__.'/settings.php';
+
+// Route untuk halaman sukses registrasi, redirect ke / hanya jika user refresh/back (JS)
+Route::view('register/success', 'pages.auth.register-success')->name('register.success');
