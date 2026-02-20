@@ -24,19 +24,9 @@
                     </button>
                 </div>
 
-                @if (Route::has('password.request'))
-                    <div class="flex justify-end mt-1">
-                        <a href="{{ route('password.request') }}" class="text-xs text-orange-500 hover:underline">Lupa Kata Sandi?</a>
-                    </div>
-                @endif
-
                 <button type="submit" class="mt-4 bg-blue-900 text-white rounded-lg py-2 font-semibold hover:bg-blue-800 transition active:scale-95">Masuk</button>
             </form>
 
-            <div class="text-center mt-4 text-sm">
-                <span class="text-gray-500">Belum Memiliki Akun?</span>
-                <a href="{{ route('register') }}" class="text-orange-500 font-semibold hover:underline ml-1">Daftar</a>
-            </div>
         </div>
     </div>
         <script>

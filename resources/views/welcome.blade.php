@@ -4,6 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Daftar Akun JTVHub</title>
+    <link rel="icon" href="images/logo-jtvhub.png" type="image/png">
+    <link rel="apple-touch-icon" href="images/logo-jtvhub.png">
     <style>
         body { font-family: ui-sans-serif, system-ui, sans-serif; background: #fff; color: #1b1b18; margin: 0; }
         .center-box { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1rem; }
