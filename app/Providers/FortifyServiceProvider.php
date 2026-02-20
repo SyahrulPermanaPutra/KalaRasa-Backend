@@ -18,7 +18,8 @@ class FortifyServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Bind custom RegisterResponse to override default Fortify behavior
+        $this->app->singleton(\Laravel\Fortify\Contracts\RegisterResponse::class, \App\Http\Responses\RegisterResponse::class);
     }
 
     /**
@@ -29,6 +30,16 @@ class FortifyServiceProvider extends ServiceProvider
         $this->configureActions();
         $this->configureViews();
         $this->configureRateLimiting();
+
+        // Redirect ke halaman sukses setelah register TANPA login otomatis
+        \Event::listen(\Laravel\Fortify\Events\Registered::class, function ($event) {
+            // Logout user jika sudah login otomatis oleh Fortify
+            if (auth()->check()) {
+                auth()->logout();
+            }
+            // Redirect ke halaman sukses
+            session(['register_success' => true]);
+        });
     }
 
     /**

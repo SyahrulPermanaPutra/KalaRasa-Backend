@@ -7,21 +7,26 @@
         </div>
 
         <!-- Form Card -->
-        <div class="bg-white rounded-2xl shadow-md px-4 py-4 sm:px-6 sm:py-5 w-full max-w-xs sm:max-w-md border border-gray-100 flex flex-col items-center">
+        <div class="bg-white dark:bg-neutral-900 rounded-2xl shadow-md px-4 py-4 sm:px-6 sm:py-5 w-full max-w-xs sm:max-w-md border border-gray-100 dark:border-neutral-800 flex flex-col items-center">
             <form method="POST" action="{{ route('register.store') }}" class="flex flex-col gap-2 w-full">
                 @csrf
                 <label class="font-semibold text-sm mb-1" for="name">Nama Lengkap</label>
-                <input id="name" name="name" type="text" placeholder="Masukkan Nama Lengkap" value="{{ old('name') }}" required autofocus autocomplete="name" class="border border-gray-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <input id="name" name="name" type="text" placeholder="Masukkan Nama Lengkap" value="{{ old('name') }}" required autofocus autocomplete="name" class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
 
                 <label class="font-semibold text-sm mb-1 mt-1" for="email">Email</label>
-                <input id="email" name="email" type="email" placeholder="Masukkan Email" value="{{ old('email') }}" required autocomplete="email" class="border border-gray-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <input id="email" name="email" type="email" placeholder="Masukkan Email" value="{{ old('email') }}" required autocomplete="email" class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <div id="emailError" class="text-red-500 text-xs mb-1 hidden">Format email tidak valid.</div>
 
                 <label class="font-semibold text-sm mb-1 mt-1" for="password">Kata Sandi</label>
-                <input id="password" name="password" type="password" placeholder="Buat Kata Sandi" required autocomplete="new-password" class="border border-gray-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <input id="password" name="password" type="password" placeholder="Buat Kata Sandi" required autocomplete="new-password" class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <div id="passwordInfo" class="text-xs text-gray-500 mb-1">
+                    Minimal 8 karakter, 1 huruf kecil, 1 huruf kapital, dan 1 simbol.
+                </div>
+                <div id="passwordStrength" class="text-xs font-semibold mb-1"></div>
 
                 <label class="font-semibold text-sm mb-1 mt-1" for="password_confirmation">Konfirmasi Kata Sandi</label>
                 <div class="relative flex items-center">
-                    <input id="password_confirmation" name="password_confirmation" type="password" placeholder="Ulangi Kata Sandi" required autocomplete="new-password" class="border border-gray-300 rounded-lg px-3 py-2 w-full text-base focus:outline-none focus:ring-2 focus:ring-blue-200 pr-10" />
+                    <input id="password_confirmation" name="password_confirmation" type="password" placeholder="Ulangi Kata Sandi" required autocomplete="new-password" class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-lg px-3 py-2 w-full text-base focus:outline-none focus:ring-2 focus:ring-blue-200 pr-10" />
                     <button type="button" id="togglePasswordConfirm" tabindex="-1" class="absolute right-3 cursor-pointer text-gray-400 bg-transparent border-0 p-0 focus:outline-none" aria-label="Lihat Sandi">
                         <svg id="eyeIconConfirm" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12s-3.75 6.75-9.75 6.75S2.25 12 2.25 12z" />
@@ -31,7 +36,8 @@
                 </div>
 
                 <label class="font-semibold text-sm mb-1 mt-1" for="phone">No Telp</label>
-                <input id="phone" name="phone" type="text" placeholder="Masukkan No Telp" value="{{ old('phone') }}" required class="border border-gray-300 rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <input id="phone" name="phone" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Masukkan No Telp" value="{{ old('phone') }}" required class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <div id="phoneError" class="text-red-500 text-xs mb-1 hidden">Nomor telepon hanya boleh angka.</div>
 
                 <label class="font-semibold text-sm mb-1 mt-1">Jenis Kelamin</label>
                 <div class="flex gap-4 mb-1 flex-wrap">
@@ -47,7 +53,7 @@
 
                 <label class="font-semibold text-sm mb-1 mt-1" for="birthdate">Tanggal Lahir</label>
                 <div class="relative flex items-center">
-                    <input id="birthdate" name="birthdate" type="date" placeholder="dd/mm/yyyy" value="{{ old('birthdate') }}" required class="border border-gray-300 rounded-lg px-3 py-2 w-full text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                    <input id="birthdate" name="birthdate" type="date" placeholder="dd/mm/yyyy" value="{{ old('birthdate') }}" required class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-lg px-3 py-2 w-full text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
                 </div>
 
                 <button type="submit" class="mt-3 bg-blue-900 text-white rounded-lg py-2 font-semibold hover:bg-blue-800 transition active:scale-95">Daftar</button>
@@ -75,6 +81,57 @@
                     }
                 });
             }
+
+            // Email validation
+            const emailInput = document.getElementById('email');
+            const emailError = document.getElementById('emailError');
+            emailInput.addEventListener('input', function() {
+                const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailPattern.test(emailInput.value)) {
+                    emailError.classList.remove('hidden');
+                } else {
+                    emailError.classList.add('hidden');
+                }
+            });
+
+            // Phone validation (numbers only)
+            const phoneInput = document.getElementById('phone');
+            const phoneError = document.getElementById('phoneError');
+            phoneInput.addEventListener('input', function(e) {
+                // Remove all non-digit characters
+                let cleaned = phoneInput.value.replace(/\D/g, '');
+                if (phoneInput.value !== cleaned) {
+                    phoneInput.value = cleaned;
+                }
+                phoneError.classList.add('hidden');
+            });
+            phoneInput.addEventListener('keypress', function(e) {
+                if (e.key.length === 1 && !/\d/.test(e.key)) {
+                    e.preventDefault();
+                }
+            });
+
+            // Password strength checker
+            const passwordInput = document.getElementById('password');
+            const passwordStrength = document.getElementById('passwordStrength');
+            passwordInput.addEventListener('input', function() {
+                const value = passwordInput.value;
+                let score = 0;
+                let info = [];
+                if (value.length >= 8) score++;
+                else info.push('Minimal 8 karakter');
+                if (/[a-z]/.test(value)) score++;
+                else info.push('1 Huruf kecil');
+                if (/[A-Z]/.test(value)) score++;
+                else info.push('1 Huruf kapital');
+                if (/[^A-Za-z0-9]/.test(value)) score++;
+                else info.push('1 Simbol');
+                let status = '';
+                if (score <= 1) status = '<span class="text-red-500">Lemah</span>';
+                else if (score === 2 || score === 3) status = '<span class="text-yellow-500">Sedang</span>';
+                else if (score === 4) status = '<span class="text-green-600">Kuat</span>';
+                passwordStrength.innerHTML = 'Status: ' + status + (info.length ? ' <span class="text-gray-400">(' + info.join(', ') + ')</span>' : '');
+            });
         });
         </script>
 </x-layouts::auth>
