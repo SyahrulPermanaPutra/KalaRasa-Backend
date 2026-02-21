@@ -8,6 +8,15 @@
 
         <!-- Form Card -->
         <div class="bg-white dark:bg-neutral-900 rounded-2xl shadow-md px-4 py-4 sm:px-6 sm:py-5 w-full max-w-xs sm:max-w-md border border-gray-100 dark:border-neutral-800 flex flex-col items-center">
+                        @if ($errors->any())
+                            <div class="mb-2 w-full">
+                                <ul class="bg-red-100 dark:bg-red-900 border border-red-300 dark:border-red-700 rounded-lg px-3 py-2 text-sm text-red-700 dark:text-red-200">
+                                    @foreach ($errors->all() as $error)
+                                        <li>{{ $error }}</li>
+                                    @endforeach
+                                </ul>
+                            </div>
+                        @endif
             <form method="POST" action="{{ route('register.store') }}" class="flex flex-col gap-2 w-full">
                 @csrf
                 <label class="font-semibold text-sm mb-1" for="name">Nama Lengkap</label>

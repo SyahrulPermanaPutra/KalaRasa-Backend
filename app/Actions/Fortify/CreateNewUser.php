@@ -22,15 +22,27 @@ class CreateNewUser implements CreatesNewUsers
         Validator::make($input, [
             ...$this->profileRules(),
             'password' => $this->passwordRules(),
+            'phone' => [
+                'required',
+                'string',
+                'min:10',
+                'max:20',
+                'regex:/^0[0-9]+$/',
+            ],
+            'gender' => ['required', 'in:pria,wanita'],
+            'birthdate' => ['required', 'date', 'before:today'],
+        ], [
+            'email.unique' => 'Akun dengan email ini sudah terdaftar.',
+            'birthdate.before' => 'Tanggal lahir harus sebelum hari ini.',
         ])->validate();
 
         return User::create([
             'name' => $input['name'],
             'email' => $input['email'],
             'password' => $input['password'],
-            'phone' => $input['phone'] ?? null,
-            'gender' => $input['gender'] ?? null,
-            'birthdate' => $input['birthdate'] ?? null,
+            'phone' => $input['phone'],
+            'gender' => $input['gender'],
+            'birthdate' => $input['birthdate'],
         ]);
     }
 }
