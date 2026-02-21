@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Daftar Akun JTVHub</title>
+    <title>SSO-JTVHub-Account</title>
     <link rel="icon" href="images/logo-jtvhub.png" type="image/png">
     <link rel="apple-touch-icon" href="images/logo-jtvhub.png">
     <style>

@@ -49,10 +49,10 @@ class FortifyServiceProvider extends ServiceProvider
         $this->configureRateLimiting();
 
         // Set flag session setelah register, dan pastikan user tidak auto login
-        \Event::listen(\Laravel\Fortify\Events\Registered::class, function ($event) {
+        \Event::listen(\Illuminate\Auth\Events\Registered::class, function ($event) {
             // Logout user jika sudah login otomatis oleh Fortify
             if (auth()->check()) {
-                auth()->logout();
+                auth()->guard()->logout();
             }
             // Set flag session untuk akses satu kali halaman sukses
             session(['register_success' => true]);

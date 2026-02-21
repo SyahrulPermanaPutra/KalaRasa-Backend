@@ -32,7 +32,7 @@
         }
     </style>
     <script>
-        // Jika halaman ini diakses ulang (refresh/back), redirect ke homepage
+        window.sessionStorage.removeItem('registerSuccessShown');
         if (window.sessionStorage.getItem('registerSuccessShown')) {
             window.location.replace('/');
         } else {

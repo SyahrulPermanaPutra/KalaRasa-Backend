@@ -36,7 +36,10 @@
                 </div>
 
                 <label class="font-semibold text-sm mb-1 mt-1" for="phone">No Telp</label>
-                <input id="phone" name="phone" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Masukkan No Telp" value="{{ old('phone') }}" required class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <div class="flex items-center">
+                    <span class="px-3 py-2 bg-gray-100 dark:bg-neutral-700 rounded-l-lg text-base font-semibold text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-neutral-700 border-r-0 select-none">+62</span>
+                    <input id="phone" name="phone" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="Masukkan No Telp (812...)" value="{{ old('phone') ? ltrim(old('phone'), '0') : '' }}" required class="border border-gray-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-white rounded-r-lg px-3 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-200 w-full" style="border-left: none;" />
+                </div>
                 <div id="phoneError" class="text-red-500 text-xs mb-1 hidden">Nomor telepon hanya boleh angka.</div>
 
                 <label class="font-semibold text-sm mb-1 mt-1">Jenis Kelamin</label>
@@ -100,14 +103,28 @@
             phoneInput.addEventListener('input', function(e) {
                 // Remove all non-digit characters
                 let cleaned = phoneInput.value.replace(/\D/g, '');
-                if (phoneInput.value !== cleaned) {
-                    phoneInput.value = cleaned;
+                // Prevent leading 0
+                if (cleaned.startsWith('0')) {
+                    cleaned = cleaned.replace(/^0+/, '');
                 }
+                phoneInput.value = cleaned;
                 phoneError.classList.add('hidden');
             });
+            // Prevent typing 0 as first character
             phoneInput.addEventListener('keypress', function(e) {
                 if (e.key.length === 1 && !/\d/.test(e.key)) {
                     e.preventDefault();
+                }
+                // Prevent 0 as first character
+                if (e.key === '0' && phoneInput.selectionStart === 0) {
+                    e.preventDefault();
+                }
+            });
+            // Tambahkan 0 di depan sebelum submit
+            const form = phoneInput.closest('form');
+            form.addEventListener('submit', function(e) {
+                if (phoneInput.value && !phoneInput.value.startsWith('0')) {
+                    phoneInput.value = '0' + phoneInput.value;
                 }
             });
 
