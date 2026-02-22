@@ -115,6 +115,12 @@ class Recipe extends Model
         return $this->belongsToMany(\App\Models\User::class, 'favorite_recipes')
                     ->withTimestamps();
     }
+
+    public function bookmarkedByUsers()
+    {
+        return $this->belongsToMany(User::class, 'bookmarks')
+                    ->withTimestamps();
+    }
     
     /**
      * Scope for approved recipes

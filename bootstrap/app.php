@@ -14,11 +14,15 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         // Daftarkan semua alias middleware di sini
+        // $middleware->alias([
+        //     'admin' => AdminMiddleware::class,
+        // ]);
+
+        // Register middleware alias
         $middleware->alias([
-            'admin' => AdminMiddleware::class,
+            // 'passport.validate' => \App\Http\Middleware\ValidatePassportToken::class,
+            'admin' => \App\Http\Middleware\AdminMiddleware::class,
         ]);
-        
-        
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

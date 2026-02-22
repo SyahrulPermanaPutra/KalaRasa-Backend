@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\AdminDashboardController;
 use App\Http\Controllers\Api\Admin\AdminRecipeController;
 use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\ExpenseController;
+use App\Http\Controllers\Api\BookmarkController;
 use App\Http\Controllers\Api\RecipeController;
 use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\NlpAuthController;
@@ -52,6 +53,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{id}/toggle-favorite', [RecipeController::class, 'toggleFavorite']);
         Route::get('/my/favorites', [RecipeController::class, 'myFavorites']);
     });
+
+    // bookmark routes
+    Route::get('/bookmarks', [BookmarkController::class, 'index']);
+    Route::post('/bookmarks', [BookmarkController::class, 'store']);
+    Route::delete('/bookmarks/{recipe_id}', [BookmarkController::class, 'destroy']);
 
     // Admin Routes
     Route::prefix('admin')->middleware('admin')->group(function () {        
