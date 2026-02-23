@@ -5,12 +5,23 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Recipe;
 use App\Models\RecipeIngredient;
+use App\Services\RecipeClassificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 class AdminRecipeController extends Controller
 {
+    protected RecipeClassificationService $classificationService;
+
+    public function __construct(RecipeClassificationService $classificationService)
+    {
+        $this->classificationService = $classificationService;
+    }
+
     public function index(Request $request)
     {
         $query = Recipe::with(['creator:id,name,email', 'approver:id,name,email']);
@@ -53,27 +64,32 @@ class AdminRecipeController extends Controller
 
     public function store(Request $request)
     {
+        // 1. Cek Role Admin
         if ($request->user()->role !== 'admin') {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized'
+                'message' => 'Unauthorized - Admin only'
             ], 403);
         }
 
+        // 2. Validasi Input (Sesuaikan dengan struktur RecipeController)
         $validator = Validator::make($request->all(), [
-            'nama'               => 'required|string|max:150|min:3',
-            'deskripsi'          => 'nullable|string|max:2000',
-            'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2120',
-            'waktu_masak'        => 'nullable|integer|min:1|max:600',
-            'region'             => 'nullable|string|max:100',
-            'kategori'           => 'nullable|string|max:100',
+            'nama'          => 'required|string|max:150|min:3',
+            'deskripsi'     => 'nullable|string|max:5000',
+            'gambar'        => 'nullable|image|mimes:jpeg,png,jpg,webp|max:1024', // 1MB like user controller
+            'waktu_masak'   => 'nullable|integer|min:1|max:1440',
+            'region'        => 'nullable|string|max:100',
+            'kategori'      => 'nullable|string|max:100',
             
-            // Validasi ingredients
-            'ingredients'        => 'nullable|array',
-            'ingredients.*.ingredient_id' => 'required|exists:ingredients,id',
-            'ingredients.*.is_main'       => 'required|boolean',
-            'ingredients.*.jumlah'        => 'required|string|max:100',
-            'ingredients.*.satuan'        => 'nullable|string|max:50',
+            // Bahan-bahan: array of { nama, jumlah, satuan }
+            'bahan_bahan'   => 'required|array|min:1',
+            'bahan_bahan.*.nama'    => 'required|string|max:100',
+            'bahan_bahan.*.jumlah'  => 'required|string|max:100',
+            'bahan_bahan.*.satuan'  => 'nullable|string|max:50',
+            
+            // Langkah-langkah (opsional)
+            'langkah_langkah' => 'nullable|array',
+            'langkah_langkah.*' => 'required|string|max:500',
         ]);
 
         if ($validator->fails()) {
@@ -85,73 +101,134 @@ class AdminRecipeController extends Controller
         }
 
         try {
-            DB::beginTransaction();
+            $result = DB::transaction(function () use ($request) {
+                
+                // 3. Handle Upload Gambar (Sama seperti RecipeController)
+                $gambarPath = null;
+                if ($request->hasFile('gambar')) {
+                    $file = $request->file('gambar');
+                    
+                    // Validasi ukuran file (1MB)
+                    if ($file->getSize() > 1024 * 1024) {
+                        throw new \Exception('Ukuran gambar tidak boleh lebih dari 1MB');
+                    }
+                    
+                    // Generate unique filename
+                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                    $gambarPath = $file->storeAs('recipes', $filename, 'public');
+                }
 
-            $data = $request->only([
-                'nama',
-                'deskripsi',
-                'waktu_masak',
-                'region',
-                'kategori',
-            ]);
+                // 4. Simpan Resep Dasar
+                $recipe = Recipe::create([
+                    'nama' => $request->nama,
+                    'waktu_masak' => $request->waktu_masak,
+                    'region' => $request->region,
+                    'deskripsi' => $request->deskripsi,
+                    'gambar' => $gambarPath,
+                    'kategori' => $request->kategori,
+                    
+                    // Admin-specific: langsung approved
+                    'status' => 'approved',
+                    'approved_by' => $request->user()->id,
+                    'approved_at' => now(),
+                    
+                    // Data default
+                    'created_by' => $request->user()->id,
+                    'avg_rating' => 0.00,
+                    'total_ratings' => 0,
+                    'view_count' => 0,
+                ]);
 
-            // Sanitasi
-            $data = array_map(fn($v) => is_string($v) ? strip_tags($v) : $v, $data);
+                // 5. Proses Bahan-bahan dengan Classification Service
+                $ingredientIds = [];
+                $fallbackIngredients = [];
 
-            // Set data admin
-            $data['created_by']  = $request->user()->id;
-            $data['status']      = 'approved'; // Admin langsung approved
-            $data['approved_by'] = $request->user()->id;
-            $data['approved_at'] = now();
+                foreach ($request->bahan_bahan as $bahan) {
+                    // Normalisasi nama bahan
+                    $normalizedNama = $this->classificationService->normalize($bahan['nama']);
+                    
+                    // Cari atau buat ingredient dengan klasifikasi otomatis
+                    $ingredient = $this->classificationService->findOrCreateIngredient($normalizedNama);
+                    
+                    // Track ingredients yang menggunakan fallback classification
+                    if ($ingredient->sub_kategori === 'umum' || $ingredient->sub_kategori === null) {
+                        $fallbackIngredients[] = $ingredient->nama;
+                    }
 
-            // Upload gambar jika ada
-            if ($request->hasFile('gambar')) {
-                $path = $request->file('gambar')
-                    ->store('recipes', 'public');
+                    // Tentukan apakah bahan utama (bisa di-override oleh admin via input jika perlu)
+                    $isMain = $bahan['is_main'] ?? $this->classificationService->isMainIngredient($normalizedNama);
 
-                $data['gambar'] = $path;
-            }
+                    // Attach ke recipe_ingredients pivot table
+                    $recipe->ingredients()->attach($ingredient->id, [
+                        'is_main' => $isMain,
+                        'jumlah' => $bahan['jumlah'],
+                        'satuan' => $bahan['satuan'] ?? null,
+                    ]);
 
-            // Buat recipe
-            $recipe = Recipe::create($data);
+                    $ingredientIds[] = $ingredient->id;
+                }
 
-            // Tambahkan ingredients jika ada
-            if ($request->has('ingredients') && is_array($request->ingredients)) {
-                foreach ($request->ingredients as $ingredientData) {
-                    RecipeIngredient::create([
-                        'recipe_id'     => $recipe->id,
-                        'ingredient_id' => $ingredientData['ingredient_id'],
-                        'is_main'       => $ingredientData['is_main'],
-                        'jumlah'        => strip_tags($ingredientData['jumlah']),
-                        'satuan'        => isset($ingredientData['satuan']) ? strip_tags($ingredientData['satuan']) : null,
+                // 6. Log warning untuk ingredients yang menggunakan fallback
+                if (!empty($fallbackIngredients)) {
+                    Log::warning('Admin Recipe created with fallback ingredient classifications', [
+                        'recipe_id' => $recipe->id,
+                        'recipe_name' => $recipe->nama,
+                        'admin_id' => $request->user()->id,
+                        'fallback_ingredients' => $fallbackIngredients,
+                        'count' => count($fallbackIngredients),
                     ]);
                 }
-            }
 
-            DB::commit();
+                // 7. Generate Recipe Suitability (Kesehatan)
+                if (!empty($ingredientIds)) {
+                    $this->classificationService->generateRecipeSuitability($recipe->id, $ingredientIds);
+                }
+
+                // 8. Simpan Langkah-langkah (jika ada)
+                if ($request->filled('langkah_langkah') && !empty($request->langkah_langkah)) {
+                    $stepsText = implode("\n", array_map(
+                        fn($index, $step) => ($index + 1) . ". " . trim($step),
+                        array_keys($request->langkah_langkah),
+                        $request->langkah_langkah
+                    ));
+                    
+                    $recipe->deskripsi .= "\n\nLangkah-langkah:\n" . $stepsText;
+                    $recipe->save();
+                }
+
+                return [
+                    'recipe' => $recipe->fresh(['ingredients']),
+                    'image_url' => $gambarPath ? Storage::url($gambarPath) : null,
+                ];
+            });
 
             return response()->json([
                 'success' => true,
-                'message' => 'Resep berhasil ditambahkan',
-                'data'    => $recipe->load([
-                    'creator', 
-                    'approver',
-                    'recipeIngredients.ingredient'
-                ])
+                'message' => 'Resep berhasil ditambahkan oleh Admin (langsung approved)',
+                'data' => [
+                    'recipe' => $result['recipe'],
+                    'image_url' => $result['image_url'],
+                    'fallback_count' => count($fallbackIngredients ?? []),
+                ]
             ], 201);
 
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors' => $e->errors()
+            ], 422);
+
         } catch (\Exception $e) {
-            DB::rollBack();
-            
-            // Hapus gambar jika sudah terupload
-            if (isset($data['gambar']) && Storage::disk('public')->exists($data['gambar'])) {
-                Storage::disk('public')->delete($data['gambar']);
-            }
+            Log::error('Admin failed to store recipe', [
+                'error' => $e->getMessage(),
+                'admin_id' => $request->user()?->id,
+                'payload' => $request->all(),
+            ]);
 
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat menyimpan resep',
-                'error'   => $e->getMessage()
+                'message' => 'Gagal menyimpan resep: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -182,33 +259,41 @@ class AdminRecipeController extends Controller
 
     public function update(Request $request, $id)
     {
-        // Handle method spoofing untuk form-data
+        // Handle method spoofing untuk form-data (jika perlu)
         if ($request->has('_method') && $request->_method === 'PUT') {
             $request->setMethod('PUT');
         }
+
+        // 1. Cek Role Admin
         if ($request->user()->role !== 'admin') {
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized'
+                'message' => 'Unauthorized - Admin only'
             ], 403);
         }
 
+        // 2. Cari Recipe
         $recipe = Recipe::findOrFail($id);
 
+        // 3. Validasi Input (Sesuai struktur RecipeController)
         $validator = Validator::make($request->all(), [
-            'nama'               => 'required|string|max:150|min:3',
-            'deskripsi'          => 'nullable|string|max:2000',
-            'gambar'             => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2120',
-            'waktu_masak'        => 'nullable|integer|min:1|max:600',
-            'region'             => 'nullable|string|max:100',
-            'kategori'           => 'nullable|string|max:100',
+            'nama'          => 'required|string|max:150|min:3',
+            'deskripsi'     => 'nullable|string|max:5000',
+            'gambar'        => 'nullable|image|mimes:jpeg,png,jpg,webp|max:1024', // 1MB
+            'waktu_masak'   => 'nullable|integer|min:1|max:1440',
+            'region'        => 'nullable|string|max:100',
+            'kategori'      => 'nullable|string|max:100',
             
-            // Validasi ingredients
-            'ingredients'        => 'nullable|array',
-            'ingredients.*.ingredient_id' => 'required|exists:ingredients,id',
-            'ingredients.*.is_main'       => 'required|boolean',
-            'ingredients.*.jumlah'        => 'required|string|max:100',
-            'ingredients.*.satuan'        => 'nullable|string|max:50',
+            // Bahan-bahan: array of { nama, jumlah, satuan, is_main? }
+            'bahan_bahan'   => 'nullable|array',
+            'bahan_bahan.*.nama'    => 'required|string|max:100',
+            'bahan_bahan.*.jumlah'  => 'required|string|max:100',
+            'bahan_bahan.*.satuan'  => 'nullable|string|max:50',
+            'bahan_bahan.*.is_main' => 'nullable|boolean',
+            
+            // Langkah-langkah (opsional)
+            'langkah_langkah' => 'nullable|array',
+            'langkah_langkah.*' => 'required|string|max:500',
         ]);
 
         if ($validator->fails()) {
@@ -220,76 +305,150 @@ class AdminRecipeController extends Controller
         }
 
         try {
-            DB::beginTransaction();
+            $result = DB::transaction(function () use ($request, $recipe) {
+                
+                $gambarPath = $recipe->gambar; // Default: pakai gambar lama
+                $gambarBaru = false;
 
-            $data = $request->only([
-                'nama',
-                'deskripsi',
-                'waktu_masak',
-                'region',
-                'kategori',
-            ]);
-
-            // Sanitasi
-            $data = array_map(fn($v) => is_string($v) ? strip_tags($v) : $v, $data);
-
-            // Upload gambar baru jika ada
-            if ($request->hasFile('gambar')) {
-                // Hapus gambar lama dari storage
-                if ($recipe->gambar && Storage::disk('public')->exists($recipe->gambar)) {
-                    Storage::disk('public')->delete($recipe->gambar);
+                // 4. Handle Upload Gambar Baru (jika ada)
+                if ($request->hasFile('gambar')) {
+                    $file = $request->file('gambar');
+                    
+                    // Validasi ukuran file (1MB)
+                    if ($file->getSize() > 1024 * 1024) {
+                        throw new \Exception('Ukuran gambar tidak boleh lebih dari 1MB');
+                    }
+                    
+                    // Hapus gambar lama dari storage
+                    if ($gambarPath && Storage::disk('public')->exists($gambarPath)) {
+                        Storage::disk('public')->delete($gambarPath);
+                    }
+                    
+                    // Generate unique filename & upload
+                    $filename = time() . '_' . Str::random(10) . '.' . $file->getClientOriginalExtension();
+                    $gambarPath = $file->storeAs('recipes', $filename, 'public');
+                    $gambarBaru = true;
                 }
 
-                $path = $request->file('gambar')->store('recipes', 'public');
-                $data['gambar'] = $path;
-            }
+                // 5. Update Data Dasar Recipe
+                $recipe->update([
+                    'nama' => $request->nama,
+                    'waktu_masak' => $request->waktu_masak,
+                    'region' => $request->region,
+                    'deskripsi' => $request->deskripsi, // Akan di-append steps jika ada
+                    'gambar' => $gambarPath,
+                    'kategori' => $request->kategori,
+                    // Admin update: tetap approved, update approved_at
+                    'approved_by' => $request->user()->id,
+                    'approved_at' => now(),
+                ]);
 
-            // Update recipe
-            $recipe->update($data);
+                // 6. Update Bahan-bahan (jika dikirim)
+                $ingredientIds = [];
+                $fallbackIngredients = [];
 
-            // Update ingredients jika ada
-            if ($request->has('ingredients')) {
-                // Hapus semua ingredients lama
-                RecipeIngredient::where('recipe_id', $recipe->id)->delete();
+                if ($request->filled('bahan_bahan') && is_array($request->bahan_bahan)) {
+                    // Hapus semua ingredients lama dari pivot table
+                    $recipe->ingredients()->detach();
 
-                // Tambahkan ingredients baru
-                if (is_array($request->ingredients) && count($request->ingredients) > 0) {
-                    foreach ($request->ingredients as $ingredientData) {
-                        RecipeIngredient::create([
-                            'recipe_id'     => $recipe->id,
-                            'ingredient_id' => $ingredientData['ingredient_id'],
-                            'is_main'       => $ingredientData['is_main'],
-                            'jumlah'        => strip_tags($ingredientData['jumlah']),
-                            'satuan'        => isset($ingredientData['satuan']) ? strip_tags($ingredientData['satuan']) : null,
+                    foreach ($request->bahan_bahan as $bahan) {
+                        // Normalisasi nama bahan
+                        $normalizedNama = $this->classificationService->normalize($bahan['nama']);
+                        
+                        // Cari atau buat ingredient dengan klasifikasi otomatis
+                        $ingredient = $this->classificationService->findOrCreateIngredient($normalizedNama);
+                        
+                        // Track ingredients yang menggunakan fallback classification
+                        if ($ingredient->sub_kategori === 'umum' || $ingredient->sub_kategori === null) {
+                            $fallbackIngredients[] = $ingredient->nama;
+                        }
+
+                        // Tentukan apakah bahan utama
+                        $isMain = $bahan['is_main'] ?? $this->classificationService->isMainIngredient($normalizedNama);
+
+                        // Attach ke pivot table
+                        $recipe->ingredients()->attach($ingredient->id, [
+                            'is_main' => $isMain,
+                            'jumlah' => $bahan['jumlah'],
+                            'satuan' => $bahan['satuan'] ?? null,
                         ]);
+
+                        $ingredientIds[] = $ingredient->id;
                     }
                 }
-            }
 
-            DB::commit();
+                // 7. Log warning untuk fallback ingredients
+                if (!empty($fallbackIngredients)) {
+                    Log::warning('Admin Recipe updated with fallback ingredient classifications', [
+                        'recipe_id' => $recipe->id,
+                        'recipe_name' => $recipe->nama,
+                        'admin_id' => $request->user()->id,
+                        'fallback_ingredients' => $fallbackIngredients,
+                        'count' => count($fallbackIngredients),
+                    ]);
+                }
+
+                // 8. Re-generate Recipe Suitability (jika ada ingredient)
+                if (!empty($ingredientIds)) {
+                    $this->classificationService->generateRecipeSuitability($recipe->id, $ingredientIds);
+                }
+
+                // 9. Update Langkah-langkah (jika ada)
+                if ($request->filled('langkah_langkah') && is_array($request->langkah_langkah)) {
+                    // Ambil deskripsi dasar (tanpa steps lama)
+                    $baseDescription = preg_replace('/\n\nLangkah-langkah:.*$/s', '', $recipe->getOriginal('deskripsi'));
+                    
+                    // Format steps baru
+                    $stepsText = implode("\n", array_map(
+                        fn($index, $step) => ($index + 1) . ". " . trim($step),
+                        array_keys($request->langkah_langkah),
+                        $request->langkah_langkah
+                    ));
+                    
+                    // Update deskripsi dengan steps baru
+                    $recipe->deskripsi = $baseDescription . "\n\nLangkah-langkah:\n" . $stepsText;
+                    $recipe->save();
+                }
+
+                return [
+                    'recipe' => $recipe->fresh(['ingredients']),
+                    'image_url' => $gambarPath ? Storage::url($gambarPath) : null,
+                ];
+            });
 
             return response()->json([
                 'success' => true,
-                'message' => 'Resep berhasil diupdate',
-                'data'    => $recipe->fresh()->load([
-                    'creator', 
-                    'approver',
-                    'recipeIngredients.ingredient'
-                ])
+                'message' => 'Resep berhasil diupdate oleh Admin',
+                'data' => [
+                    'recipe' => $result['recipe'],
+                    'image_url' => $result['image_url'],
+                    'fallback_count' => count($fallbackIngredients ?? []),
+                ]
             ]);
 
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors' => $e->errors()
+            ], 422);
+
         } catch (\Exception $e) {
-            DB::rollBack();
-            
-            // Hapus gambar baru jika sudah terupload
-            if (isset($data['gambar']) && Storage::disk('public')->exists($data['gambar'])) {
-                Storage::disk('public')->delete($data['gambar']);
+            Log::error('Admin failed to update recipe', [
+                'error' => $e->getMessage(),
+                'recipe_id' => $id,
+                'admin_id' => $request->user()?->id,
+                'payload' => $request->all(),
+            ]);
+
+            // Rollback gambar jika baru diupload tapi transaction gagal
+            if (isset($gambarPath) && $gambarBaru && Storage::disk('public')->exists($gambarPath)) {
+                Storage::disk('public')->delete($gambarPath);
             }
 
             return response()->json([
                 'success' => false,
-                'message' => 'Terjadi kesalahan saat mengupdate resep',
-                'error'   => $e->getMessage()
+                'message' => 'Gagal mengupdate resep: ' . $e->getMessage(),
             ], 500);
         }
     }
