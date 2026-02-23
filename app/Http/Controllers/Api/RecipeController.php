@@ -208,14 +208,18 @@ class RecipeController extends Controller
         
         $isFavorited = false;
         if ($request->user()) {
-            $isFavorited = $recipe->favoritedBy()->where('user_id', $request->user()->id)->exists();
+            $userData = [
+                'is_favorited' => $recipe->favoritedBy()->where('user_id', $request->user()->id)->exists(),
+                'my_rating' => $recipe->userRating($request->user()->id),
+                'has_rated' => $recipe->isRatedByUser($request->user()->id)
+            ];
         }
         
         return response()->json([
             'success' => true,
             'data' => [
                 'recipe' => $recipe,
-                'is_favorited' => $isFavorited
+                'user_data' => $userData  
             ]
         ]);
     }

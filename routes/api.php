@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Admin\AdminDashboardController;
 use App\Http\Controllers\Api\Admin\AdminRecipeController;
 use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\ExpenseController;
+use App\Http\Controllers\Api\RecipeRatingController;
 use App\Http\Controllers\Api\BookmarkController;
 use App\Http\Controllers\Api\RecipeController;
 use App\Http\Controllers\Api\ChatbotController;
@@ -58,6 +59,24 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/bookmarks', [BookmarkController::class, 'index']);
     Route::post('/bookmarks', [BookmarkController::class, 'store']);
     Route::delete('/bookmarks/{recipe_id}', [BookmarkController::class, 'destroy']);
+
+    // Rating routes
+    Route::prefix('recipes/{recipe_id}')->group(function () {
+        // Add/update rating
+        Route::post('/ratings', [RecipeRatingController::class, 'rate']);
+        
+        // Get my rating
+        Route::get('/ratings/me', [RecipeRatingController::class, 'show']);
+        
+        // Delete my rating
+        Route::delete('/ratings/me', [RecipeRatingController::class, 'destroy']);
+        
+        // List all ratings (dengan filter) - kayaknya ini buat admin aja ya?
+        Route::get('/ratings', [RecipeRatingController::class, 'index']);
+        
+        // Rating statistics
+        // Route::get('/ratings/statistics', [RecipeRatingController::class, 'statistics']);
+    });
 
     // Admin Routes
     Route::prefix('admin')->middleware('admin')->group(function () {        

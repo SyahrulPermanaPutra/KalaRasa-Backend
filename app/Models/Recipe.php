@@ -147,6 +147,45 @@ class Recipe extends Model
     }
 
     /**
+     * Get all ratings for this recipe
+     */
+    public function ratings()
+    {
+        return $this->hasMany(RecipeRating::class);
+    }
+
+    /**
+     * Get user's rating for this recipe
+     */
+    public function userRating($userId)
+    {
+        return $this->ratings()->where('user_id', $userId)->first();
+    }
+
+    /**
+     * Check if user has rated this recipe
+     */
+    public function isRatedByUser($userId)
+    {
+        return $this->ratings()->where('user_id', $userId)->exists();
+    }
+
+    /**
+     * Update average rating and total ratings
+     */
+    public function updateRating()
+    {
+        $stats = $this->ratings()
+            ->selectRaw('AVG(rating) as avg_rating, COUNT(*) as total_ratings')
+            ->first();
+
+        $this->update([
+            'avg_rating' => $stats->avg_rating ? round($stats->avg_rating, 2) : 0,
+            'total_ratings' => $stats->total_ratings ?? 0
+        ]);
+    }
+
+    /**
      * Scope for recipes by region
      */
     public function scopeFromRegion($query, $region)
