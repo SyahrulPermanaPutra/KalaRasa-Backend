@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Support\Facades\Log;
 
 class User extends Authenticatable
 {
@@ -21,11 +22,13 @@ class User extends Authenticatable
         'avatar',
         'gender',
         'birth_date',
+        'points',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'points' => 'integer'
     ];
 
     protected $casts = [
@@ -36,6 +39,25 @@ class User extends Authenticatable
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
+    }
+
+    /**
+     * Add points to user
+     */
+    public function addPoints(int $points, string $reason = null)
+    {
+        $this->increment('points', $points);
+        
+        // Optional: Log activity
+        Log::info('User points added', [
+            'user_id' => $this->id,
+            'user_name' => $this->name,
+            'points' => $points,
+            'reason' => $reason,
+            'total_points' => $this->fresh()->points
+        ]);
+
+        return $this;
     }
 
     public function shoppingLists()

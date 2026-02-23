@@ -339,6 +339,13 @@ class AdminRecipeController extends Controller
 
     public function approve(Request $request, $id)
     {
+        if ($request->user()->role !== 'admin') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 403);
+        }
+
         $recipe = Recipe::findOrFail($id);
 
         if ($recipe->status !== 'pending') {
@@ -348,18 +355,51 @@ class AdminRecipeController extends Controller
             ], 400);
         }
 
-        $recipe->update([
-            'status'           => 'approved',
-            'approved_by'      => $request->user()->id,
-            'approved_at'      => now(),
-            'rejection_reason' => null,
-        ]);
+        try {
+            DB::beginTransaction();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Resep berhasil disetujui',
-            'data'    => $recipe->fresh()->load(['creator', 'approver'])
-        ]);
+            // Update status recipe
+            $recipe->update([
+                'status'           => 'approved',
+                'approved_by'      => $request->user()->id,
+                'approved_at'      => now(),
+                'rejection_reason' => null,
+            ]);
+
+            // ✨ AUTO ADD POINTS UNTUK USER YANG BUAT RESEP
+            $creator = $recipe->creator;
+            $pointsAwarded = 0;
+            
+            if ($creator) {
+                $pointsAwarded = config('points.recipe_approved', 10);
+                $creator->addPoints($pointsAwarded, "Recipe '{$recipe->nama}' approved");
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Resep berhasil disetujui',
+                'data'    => [
+                    'recipe' => $recipe->fresh()->load(['creator', 'approver']),
+                    'points_awarded' => $pointsAwarded,
+                    'creator' => [
+                        'id' => $creator->id,
+                        'name' => $creator->name,
+                        'total_points' => $creator->fresh()->points
+                    ]
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function reject(Request $request, $id)

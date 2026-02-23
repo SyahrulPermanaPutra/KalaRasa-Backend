@@ -92,9 +92,23 @@ class AuthController extends Controller
 
     public function profile(Request $request)
     {
+        $user = $request->user();
+        
+        // Hitung total resep yang diapprove
+        $approvedRecipesCount = \App\Models\Recipe::where('created_by', $user->id)
+            ->where('status', 'approved')
+            ->count();
+
         return response()->json([
             'success' => true,
-            'data' => $this->formatUserResponse($request->user())
+            'data' => [
+                'user' => $user,
+                'stats' => [
+                    'points' => $user->points,
+                    'approved_recipes' => $approvedRecipesCount,
+                    'point_per_recipe' => config('points.recipe_approved', 10)
+                ]
+            ]
         ]);
     }
 
