@@ -80,7 +80,9 @@ class AuthController extends Controller
         $http = app()->make(\GuzzleHttp\Client::class);
 
         try {
-            $response = $http->post('http://127.0.0.1:8002/oauth/token', [
+            $oauthUrl = rtrim(env('API_AUTH_URL'), '/') . '/oauth/token';
+
+            $response = $http->post($oauthUrl, [
                 'timeout' => 10,
                 'form_params' => [
                     'grant_type'    => 'password',
@@ -245,7 +247,9 @@ class AuthController extends Controller
         $http = app()->make(\GuzzleHttp\Client::class);
 
         try {
-            $response = $http->post('http://127.0.0.1:8002/oauth/token', [
+            $oauthUrl = rtrim(env('API_AUTH_URL'), '/') . '/oauth/token';
+
+            $response = $http->post($oauthUrl, [
                 'timeout' => 10,
                 'form_params' => [
                     'grant_type'    => 'refresh_token',
