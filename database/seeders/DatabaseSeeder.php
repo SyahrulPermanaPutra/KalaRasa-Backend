@@ -16,11 +16,11 @@ class DatabaseSeeder extends Seeder
             HealthConditionsTableSeeder::class,
             HealthConditionRestrictionsTableSeeder::class,
             RecipeSuitabilityTableSeeder::class,
-            // FavoriteRecipesTableSeeder::class,
+            BookmarkSeeder::class,
             ShoppingListsTableSeeder::class,
-            // ShoppingListItemsTableSeeder::class,
+            ShoppingListItemsTableSeeder::class,
             ExpensesTableSeeder::class,
-            UserQueriesTableSeeder::class,
+            userqueriesTableSeeder::class,
             MatchedRecipesTableSeeder::class,
         ]);
     }

@@ -5,7 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-class FavoriteRecipe extends Model
+class Bookmark extends Model
 {
     use HasFactory;
 
@@ -14,11 +14,17 @@ class FavoriteRecipe extends Model
         'recipe_id',
     ];
 
+    /**
+     * Relasi ke User
+     */
     public function user()
     {
         return $this->belongsTo(User::class);
     }
 
+    /**
+     * Relasi ke Recipe
+     */
     public function recipe()
     {
         return $this->belongsTo(Recipe::class);
