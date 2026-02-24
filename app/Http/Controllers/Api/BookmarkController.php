@@ -14,9 +14,9 @@ class BookmarkController extends Controller
     /**
      * Tampilkan daftar bookmark user
      */
-    public function index()
+    public function index(Request $request)
     {
-        $user = Auth::user();
+        $user = $request->get('auth_user');
 
         // Debug: Cek class user dan apakah method bookmarks ada
         Log::info('User class: ' . get_class($user));

@@ -13,6 +13,7 @@ class User extends Authenticatable
     use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
+        'sso_id',
         'name',
         'email',
         'password',
@@ -32,6 +33,7 @@ class User extends Authenticatable
     ];
 
     protected $casts = [
+        'role' => 'string',
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
     ];
@@ -39,6 +41,11 @@ class User extends Authenticatable
     public function isAdmin(): bool
     {
         return $this->role === 'admin';
+    }
+
+    public function isUser(): bool
+    {
+        return $this->role === 'user';
     }
 
     /**

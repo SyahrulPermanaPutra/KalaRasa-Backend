@@ -27,10 +27,10 @@ Route::prefix('recipe')->group(function () {
 });
 
 Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login', [AuthController::class, 'login']);
+Route::post('/login', [AuthController::class, 'login'])->name('login');
 
 // Protected Routes (User & Admin)
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth.sso')->group(function () {
     
     // Auth Routes
     Route::post('/logout', [AuthController::class, 'logout']);

@@ -4,6 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\AdminMiddleware;
+use App\Http\Middleware\AuthSSO;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -14,14 +15,11 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         // Daftarkan semua alias middleware di sini
-        // $middleware->alias([
-        //     'admin' => AdminMiddleware::class,
-        // ]);
-
         // Register middleware alias
         $middleware->alias([
-            // 'passport.validate' => \App\Http\Middleware\ValidatePassportToken::class,
-            'admin' => \App\Http\Middleware\AdminMiddleware::class,
+            // 'admin' => \App\Http\Middleware\AdminMiddleware::class,
+            'auth.sso' => \App\Http\Middleware\AuthSSO::class,
+            'admin' => \App\Http\Middleware\EnsureAdmin::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
