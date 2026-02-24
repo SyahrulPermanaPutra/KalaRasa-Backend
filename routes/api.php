@@ -28,12 +28,17 @@ Route::prefix('recipe')->group(function () {
 
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
+
 
 // Protected Routes (User & Admin)
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware('auth:api')->group(function () {
     
     // Auth Routes
+    Route::get('/me', [AuthController::class, 'me']);
+    Route::get('/devices', [AuthController::class, 'devices']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::post('/logout-device', [AuthController::class, 'logoutDevice']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::put('/profile', [AuthController::class, 'updateProfile']);
     Route::patch('/profile', [AuthController::class, 'updateProfile']);

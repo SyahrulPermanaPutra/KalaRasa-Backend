@@ -525,7 +525,7 @@ class AdminRecipeController extends Controller
                 'rejection_reason' => null,
             ]);
 
-            // ✨ AUTO ADD POINTS UNTUK USER YANG BUAT RESEP
+            //  AUTO ADD POINTS UNTUK USER YANG BUAT RESEP
             $creator = $recipe->creator;
             $pointsAwarded = 0;
             

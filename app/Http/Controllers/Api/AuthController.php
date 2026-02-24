@@ -2,115 +2,313 @@
 
 namespace App\Http\Controllers\Api;
 
-use Illuminate\Routing\Controller;
-use App\Models\User;
+use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
+use App\Models\User;
+use App\Models\UserDevice;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\Rules\Password;
+use Laravel\Passport\Passport;
+use Carbon\Carbon;
 
 class AuthController extends Controller
 {
-    public function register(Request $request)
-    {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => ['required', 'confirmed', Password::min(6)],
-            'phone' => 'nullable|string|max:20',
-            'gender' => 'nullable|in:L,P',
-            'birth_date' => 'nullable|date',
-        ]);
-
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'phone' => $request->phone,
-            'gender' => $request->gender,
-            'birth_date' => $request->birth_date,
-            'role' => 'user',
-            'email_verified_at' => null,
-        ]);
-
-        $token = $user->createToken('auth_token')->plainTextToken;
-        
-        return response()->json([
-            'success' => true,
-            'message' => 'Registrasi berhasil',
-            'data' => [
-                'user' => $this->formatUserResponse($user),
-                'access_token' => $token,
-                'token_type' => 'Bearer',
-            ]
-        ], 201);
-    }
+    /*
+    |--------------------------------------------------------------------------
+    | LOGIN
+    |--------------------------------------------------------------------------
+    | - Simpan device per app
+    | - Revoke token lama device+app
+    | - Minta token baru ke Passport
+    | - Tag token dengan device_uuid + app_id
+    */
 
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
+            'email'        => 'required|email',
+            'password'     => 'required',
+            'device_uuid'  => 'required',
+            'device_name'  => 'required',
+            'platform'     => 'required',
+            'app_id'       => 'required'
         ]);
 
-        $user = User::where('email', $request->email)->first();
+      $user = User::where('email', $request->email)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             throw ValidationException::withMessages([
-                'email' => ['Email atau password salah.'],
+                'email' => ['Email atau Kata Sandi salah!'],
             ]);
         }
 
-        // Hapus token lama
-        $user->tokens()->delete();
+        $tokenName = $request->device_uuid . '_' . $request->app_id;
 
-        // Buat token baru
-        $token = $user->createToken('auth_token')->plainTextToken;
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Login berhasil',
-            'data' => [
-                'user' => $this->formatUserResponse($user),
-                'access_token' => $token,
-                'token_type' => 'Bearer',
+        /*
+        |--------------------------------------------------
+        | 1. SIMPAN DEVICE PER APP
+        |--------------------------------------------------
+        */
+        UserDevice::updateOrCreate(
+            [
+                'user_id'     => $user->id,
+                'device_uuid' => $request->device_uuid,
+                'app_id'      => $request->app_id
+            ],
+            [
+                'device_name'   => $request->device_name,
+                'platform'      => $request->platform,
+                'last_login_at' => now()
             ]
+        );
+
+        /*
+        |--------------------------------------------------
+        | 2. REVOKE TOKEN LAMA DEVICE + APP INI SAJA
+        |--------------------------------------------------
+        */
+        DB::table('oauth_access_tokens')
+            ->where('user_id', $user->id)
+            ->where('name', $tokenName)
+            ->update(['revoked' => true]);
+
+        /*
+        |--------------------------------------------------
+        | 3. MINTA TOKEN BARU KE PASSPORT 
+        |--------------------------------------------------
+        */
+        $http = app()->make(\GuzzleHttp\Client::class);
+
+        try {
+            $oauthUrl = rtrim(env('API_AUTH_URL'), '/') . '/oauth/token';
+
+            $response = $http->post($oauthUrl, [
+               'timeout' => 10, 
+                'headers' => [
+                    'Accept' => 'application/json',
+                ],
+                'form_params' => [
+                    'grant_type'    => 'password',
+                    'client_id'     => env('PASSPORT_PASSWORD_CLIENT_ID'),
+                    'client_secret' => env('PASSPORT_PASSWORD_CLIENT_SECRET'),
+                    'username'      => $request->email,
+                    'password'      => $request->password,
+                    'scope'         => '',
+                ],
+            ]);
+
+            $data = json_decode((string) $response->getBody(), true);
+
+            /*
+            |--------------------------------------------------
+            | 4. AMBIL TOKEN TERBARU MILIK USER
+            |--------------------------------------------------
+            */
+            $latestToken = DB::table('oauth_access_tokens')
+                ->where('user_id', $user->id)
+                ->orderByDesc('created_at')
+                ->first();
+
+            /*
+            |--------------------------------------------------
+            | 5. TAG TOKEN DENGAN device_uuid + app_id
+            |--------------------------------------------------
+            */
+            if ($latestToken) {
+                DB::table('oauth_access_tokens')
+                    ->where('id', $latestToken->id)
+                    ->update([
+                        'name' => $tokenName
+                    ]);
+            }
+
+            return response()->json([
+                'user'          => $user,
+                'access_token'  => $data['access_token'],
+                'refresh_token' => $data['refresh_token'],
+                'token_type'    => $data['token_type'],
+                'expires_in'    => $data['expires_in'],
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Login gagal',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | ME
+    |--------------------------------------------------------------------------
+    */
+    public function me(Request $request)
+    {
+        return response()->json([
+            'user' => $request->user()
         ]);
     }
 
-    public function logout(Request $request)
+    /*
+    |--------------------------------------------------------------------------
+    | LIST DEVICES AKTIF
+    |--------------------------------------------------------------------------
+    */
+    public function devices(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        $user = $request->user();
+        $currentTokenId = $user->token()->id;
+
+        $devices = DB::table('oauth_access_tokens as t')
+            ->join('user_devices as d', function ($join) use ($user) {
+                $join->on('d.device_uuid', '=', DB::raw("SUBSTRING_INDEX(t.name, '_', 1)"))
+                     ->where('d.user_id', '=', $user->id);
+            })
+            ->where('t.user_id', $user->id)
+            ->where('t.revoked', false)
+            ->select(
+                'd.device_uuid',
+                'd.device_name',
+                'd.platform',
+                'd.app_id',
+                'd.last_login_at',
+                't.created_at as token_created_at',
+                't.id as token_id'
+            )
+            ->orderByDesc('d.last_login_at')
+            ->get()
+            ->map(function ($device) use ($currentTokenId) {
+                $device->is_current_device = $device->token_id == $currentTokenId;
+                return $device;
+            });
 
         return response()->json([
-            'success' => true,
+            'devices' => $devices
+        ]);
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | LOGOUT CURRENT DEVICE
+    |--------------------------------------------------------------------------
+    */
+    public function logout(Request $request)
+    {
+        $token = $request->user()->token();
+
+        if ($token) {
+            $token->revoke();
+        }
+
+        return response()->json([
             'message' => 'Logout berhasil'
         ]);
     }
 
-    public function profile(Request $request)
+    /*
+    |--------------------------------------------------------------------------
+    | LOGOUT DEVICE TERTENTU
+    |--------------------------------------------------------------------------
+    */
+    public function logoutDevice(Request $request)
     {
+        $request->validate([
+            'device_uuid' => 'required',
+            'app_id'      => 'required'
+        ]);
+
         $user = $request->user();
-        
-        // Hitung total resep yang diapprove
-        $approvedRecipesCount = \App\Models\Recipe::where('created_by', $user->id)
-            ->where('status', 'approved')
-            ->count();
+        $tokenName = $request->device_uuid . '_' . $request->app_id;
+
+        DB::table('oauth_access_tokens')
+            ->where('user_id', $user->id)
+            ->where('name', $tokenName)
+            ->update(['revoked' => true]);
+
+        UserDevice::where('user_id', $user->id)
+            ->where('device_uuid', $request->device_uuid)
+            ->where('app_id', $request->app_id)
+            ->delete();
 
         return response()->json([
-            'success' => true,
-            'data' => [
-                'user' => $user,
-                'stats' => [
-                    'points' => $user->points,
-                    'approved_recipes' => $approvedRecipesCount,
-                    'point_per_recipe' => config('points.recipe_approved', 10)
-                ]
-            ]
+            'message' => 'Device berhasil logout'
         ]);
     }
+
+    /*
+    |--------------------------------------------------------------------------
+    | REFRESH TOKEN
+    |--------------------------------------------------------------------------
+    */
+    public function refreshToken(Request $request)
+    {
+        $request->validate([
+            'refresh_token' => 'required'
+        ]);
+
+        $http = app()->make(\GuzzleHttp\Client::class);
+
+        try {
+            $oauthUrl = rtrim(env('API_AUTH_URL'), '/') . '/oauth/token';
+
+            $response = $http->post($oauthUrl, [
+                'timeout' => 10,
+                'form_params' => [
+                    'grant_type'    => 'refresh_token',
+                    'refresh_token' => $request->refresh_token,
+                    'client_id'     => env('PASSPORT_PASSWORD_CLIENT_ID'),
+                    'client_secret' => env('PASSPORT_PASSWORD_CLIENT_SECRET'),
+                    'scope'         => '',
+                ],
+            ]);
+
+            $data = json_decode((string) $response->getBody(), true);
+
+            return response()->json([
+                'access_token'  => $data['access_token'],
+                'refresh_token' => $data['refresh_token'],
+                'token_type'    => $data['token_type'],
+                'expires_in'    => $data['expires_in'] ?? null,
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Refresh token gagal',
+                'error'   => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function boot()
+{
+    $this->registerPolicies();
+
+    Passport::tokensExpireIn(Carbon::now()->addMinutes(60));
+    Passport::refreshTokensExpireIn(Carbon::now()->addDays(30));
+}
+    public function profile(Request $request)
+        {
+            $user = $request->user();
+            
+            // Hitung total resep yang diapprove
+            $approvedRecipesCount = \App\Models\Recipe::where('created_by', $user->id)
+                ->where('status', 'approved')
+                ->count();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'user' => $user,
+                    'stats' => [
+                        'points' => $user->points,
+                        'approved_recipes' => $approvedRecipesCount,
+                        'point_per_recipe' => config('points.recipe_approved', 10)
+                    ]
+                ]
+            ]);
+        }
 
     public function updateProfile(Request $request)
     {
@@ -122,7 +320,6 @@ class AuthController extends Controller
             'phone' => 'nullable|string|max:20',
             'gender' => 'nullable|in:L,P',
             'birth_date' => 'nullable|date',
-            'avatar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
         ]);
 
         $user->name = $request->name;
@@ -130,18 +327,6 @@ class AuthController extends Controller
         $user->phone = $request->phone;
         $user->gender = $request->gender;
         $user->birth_date = $request->birth_date;
-
-        // Handle avatar upload
-        if ($request->hasFile('avatar')) {
-            // Delete old avatar if exists
-            if ($user->avatar) {
-                Storage::disk('public')->delete($user->avatar);
-            }
-
-            // Store new avatar
-            $avatarPath = $request->file('avatar')->store('avatars', 'public');
-            $user->avatar = $avatarPath;
-        }
 
         $user->save();
 
@@ -152,7 +337,7 @@ class AuthController extends Controller
         ]);
     }
 
-    /**
+     /**
      * Format user response dengan avatar URL
      */
     private function formatUserResponse($user)
@@ -165,8 +350,6 @@ class AuthController extends Controller
             'phone' => $user->phone,
             'gender' => $user->gender,
             'birth_date' => $user->birth_date,
-            'avatar' => $user->avatar,
-            'avatar_url' => $user->avatar ? Storage::url($user->avatar) : null,
             'email_verified_at' => $user->email_verified_at,
             'created_at' => $user->created_at,
             'updated_at' => $user->updated_at,

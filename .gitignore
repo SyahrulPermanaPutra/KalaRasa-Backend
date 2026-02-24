@@ -1,24 +1,32 @@
-*.log
-.DS_Store
-.env
-.env.backup
-.env.production
-.phpactor.json
-.phpunit.result.cache
-/.fleet
-/.idea
-/.nova
-/.phpunit.cache
-/.vscode
-/.zed
-/auth.json
+### Framework & Dependency ###
+/vendor
 /node_modules
 /public/build
 /public/hot
 /public/storage
 /storage/*.key
 /storage/pail
-/vendor
+
+### Environment Files ###
+.env
+.env.backup
+.env.production
+
+### Cache & Log Files ###
+/.phpunit.cache
+/.phpunit.result.cache
+.phpactor.json
+
+### Laravel Specific ###
 Homestead.json
 Homestead.yaml
-Thumbs.db
+npm-debug.log
+yarn-error.log
+/auth.json
+
+### IDE Directories ###
+/.fleet
+/.idea
+/.nova
+/.vscode
+/.zed
