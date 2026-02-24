@@ -27,7 +27,7 @@ return [
     | Application URL
     |--------------------------------------------------------------------------
     */
-    'url' => env('APP_URL', 'http://localhost'),
+    'url' => env('APP_URL', 'https://hub.jtv.co.id'),
 
     'timezone' => 'UTC',
 
