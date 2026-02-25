@@ -1,4 +1,5 @@
 <?php
+// database/migrations/2024_01_01_000001_create_roles_table.php
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
@@ -11,8 +12,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('users', function (Blueprint $table) {
-            $table->renameColumn('sso_id', 'sso_raw');
+        Schema::create('roles', function (Blueprint $table) {
+            $table->id();
+            $table->string('name', 255)->unique();
+            $table->string('display_name', 255)->nullable();
+            $table->timestamps();
         });
     }
 
@@ -21,8 +25,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('users', function (Blueprint $table) {
-            $table->renameColumn('sso_raw', 'sso_id');
-        });
+        Schema::dropIfExists('roles');
     }
 };

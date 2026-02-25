@@ -40,6 +40,11 @@ return [
         'timeout'      => env('NLP_TIMEOUT', 10),
     ],
 
+    'sso' => [
+        'url' => env('SSO_URL','https://hub.jtv.co.id'),
+        'app_id' => env('APP_ID'),
+    ],
+
 
 
     /*

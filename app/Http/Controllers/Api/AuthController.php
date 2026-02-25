@@ -2,184 +2,154 @@
 
 namespace App\Http\Controllers\Api;
 
-use Illuminate\Routing\Controller;
+use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Validation\ValidationException;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Validation\Rules\Password;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 class AuthController extends Controller
 {
-    public function register(Request $request)
-    {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users',
-            'password' => ['required', 'confirmed', Password::min(6)],
-            'phone' => 'nullable|string|max:20',
-            'gender' => 'nullable|in:L,P',
-            'birth_date' => 'nullable|date',
-        ]);
+    public function login(Request $request)
+{
+    $request->validate([
+        'email' => 'required|email',
+        'password' => 'required',
+        'device_uuid' => 'required',
+        'device_name' => 'required',
+        'platform' => 'required',
+    ]);
 
-        $user = User::create([
-            'name' => $request->name,
-            'email' => $request->email,
-            'password' => Hash::make($request->password),
-            'phone' => $request->phone,
-            'gender' => $request->gender,
-            'birth_date' => $request->birth_date,
-            'role' => 'user',
-            'email_verified_at' => null,
-        ]);
-
-        $token = $user->createToken('auth_token')->plainTextToken;
-        
-        return response()->json([
-            'success' => true,
-            'message' => 'Registrasi berhasil',
-            'data' => [
-                'user' => $this->formatUserResponse($user),
-                'access_token' => $token,
-                'token_type' => 'Bearer',
-            ]
-        ], 201);
+    $ssoBase = config('services.sso.url');
+    
+    if (!$ssoBase) {
+        $ssoBase = env('SSO_URL', 'https://hub.jtv.co.id');
     }
 
-    public function login(Request $request)
-    {
+    $loginUrl = rtrim($ssoBase, '/') . '/api/login';
+    $loginUrl = str_replace('http://', 'https://', $loginUrl);
 
-        $request->validate([
-            'email' => 'required|email',
-            'password' => 'required',
-            'device_uuid' => 'required',
-            'device_name' => 'required',
-            'platform' => 'required',
-            // 'app_id' tidak perlu divalidasi dari input user
-        ]);
-
-        $ssoBase = env('API_SSO_URL');
-        if (empty($ssoBase)) {
-            return back()->withErrors(['login' => 'SSO API URL belum dikonfigurasi. Silakan set API_SSO_URL di .env']);
-        }
-
-        $loginUrl = rtrim($ssoBase, '/') . '/api/login';
-
-        $response = Http::post($loginUrl, [
+    try {
+        $response = Http::withHeaders([
+            'Accept' => 'application/json',
+            'Content-Type' => 'application/json',
+        ])->timeout(30)->post($loginUrl, [
             'email' => $request->email,
             'password' => $request->password,
             'device_uuid' => $request->device_uuid,
             'device_name' => $request->device_name,
             'platform' => $request->platform,
-            'app_id' => env('APP_ID'),
+            'app_id' => $request->app_id ?? config('services.sso.app_id'),
         ]);
 
-        if ($response->successful() && isset($response['access_token'])) {
-            session(['access_token' => $response['access_token']]);
-            session(['refresh_token' => $response['refresh_token'] ?? null]);
-            // Simpan data user dari response SSO ke session jika tersedia
-            if (isset($response['user'])) {
-                $sso = $response['user'];
+        \Log::info('SSO Response Status: ' . $response->status());
+        \Log::info('SSO Response Body: ', ['body' => $response->json()]);
 
-                session(['user_name' => $sso['name'] ?? 'User']);
-                session(['user_email' => $sso['email'] ?? 'user@example.com']);
-
-                // Sync to database (create or update)
-                $ssoId = $sso['id'] ?? null;
-                $email = $sso['email'] ?? null;
-
-                $phone = $sso['phone'] ?? $sso['phone_number'] ?? $sso['no_telp'] ?? null;
-                $gender = $sso['gender'] ?? null;
-                $birthdate = $sso['birthdate'] ?? null;
-
-                $user = null;
-                if ($ssoId) {
-                    $user = User::where('sso_id', $ssoId)->first();
-                }
-                if (!$user && $email) {
-                    $user = User::where('email', $email)->first();
-                }
-
-                if (!$user) {
-                    $user = new User();
-                }
-
-                $user->sso_id = $ssoId ?? $user->sso_id;
-                $user->name = $sso['name'] ?? $user->name;
-                $user->email = $sso['email'] ?? $user->email;
-                $user->phone = $phone ?? $user->phone;
-                $user->gender = $gender ?? $user->gender;
-                if ($birthdate) {
-                    // try to store as Y-m-d; leave raw if not parseable
-                    $user->birthdate = $birthdate;
-                }
-                // ✅ UBAH: Role langsung dari kolom, bukan relasi
-                // Ambil role dari SSO, default 'user' jika tidak ada
-                $role = $sso['role'] ?? 'user';
-                
-                // Validasi role hanya 'admin' atau 'user'
-                if (!in_array($role, ['admin', 'user'])) {
-                    $role = 'user'; // Default ke user jika role tidak valid
-                }
-                
-                $user->role = $role;
-                $user->save();
-
-                $user->save();
-
-                // If user has no role, assign default 'customer'
-                // if (empty($user->role_id)) {
-                //     $customerRole = Role::firstOrCreate(
-                //         ['name' => 'customer'],
-                //         ['display_name' => 'Customer']
-                //     );
-                //     $user->role_id = $customerRole->id;
-                //     $user->save();
-                //     session(['user_role' => $customerRole->name]);
-                // } else {
-                //     // ensure session reflects assigned role
-                //     if ($user->role) {
-                //         session(['user_role' => $user->role->name]);
-                //     }
-                // }
-
-                // Store sso id in session (now that it's available)
-                session(['user_sso_id' => $ssoId]);
-
-                // Set some handy session values
-                session(['user_gender' => $gender]);
-                session(['user_birthdate' => $birthdate]);
-                session(['user_phone' => $phone]);
-            }
-            return redirect('/');
-        } else {
-            $error = $response->json('message') ?? 'Login gagal!';
-            return back()->withErrors(['login' => $error]);
+        if (!$response->successful()) {
+            return response()->json([
+                'success' => false,
+                'message' => $response->json('message') ?? 'Login gagal di SSO',
+            ], 401);
         }
-    }
 
-    public function logout(Request $request)
+        $data = $response->json();
+
+        if (!isset($data['access_token'])) {
+            \Log::error('Access token tidak ditemukan', ['response' => $data]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Token tidak ditemukan dari SSO',
+                'debug' => $data
+            ], 401);
+        }
+
+        $ssoUser = $data['user'] ?? null;
+
+        if (!$ssoUser) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Data user tidak ditemukan dari SSO'
+            ], 401);
+        }
+
+        // ✅ Gunakan null coalescing operator (??) untuk semua field
+        $user = User::updateOrCreate(
+            ['sso_id' => $ssoUser['id'] ?? null],
+            [
+                'name' => $ssoUser['name'] ?? ($ssoUser['nama'] ?? 'User'),
+                'email' => $ssoUser['email'] ?? null,
+                'phone' => $ssoUser['phone'] ?? ($ssoUser['no_hp'] ?? null),
+                'gender' => $ssoUser['gender'] ?? ($ssoUser['jenis_kelamin'] ?? null),
+                'birthdate' => $ssoUser['birthdate'] ?? ($ssoUser['tanggal_lahir'] ?? null),
+                // ✅ Field role - default ke 'user' jika tidak ada
+                'role' => isset($ssoUser['role']) 
+                          ? (in_array($ssoUser['role'], ['admin', 'user']) ? $ssoUser['role'] : 'user')
+                          : 'user',
+            ]
+        );
+
+        // Simpan device information (jika tabel user_devices ada)
+        try {
+            if (class_exists(\App\Models\UserDevice::class)) {
+                \App\Models\UserDevice::updateOrCreate(
+                    [
+                        'user_id' => $user->id,
+                        'device_uuid' => $request->device_uuid,
+                    ],
+                    [
+                        'app_id' => $request->app_id ?? config('services.sso.app_id'),
+                        'device_name' => $request->device_name,
+                        'platform' => $request->platform,
+                        'last_login_at' => now(),
+                    ]
+                );
+            }
+        } catch (\Exception $e) {
+            \Log::warning('Gagal menyimpan device info: ' . $e->getMessage());
+            // Lanjutkan meskipun gagal menyimpan device
+        }
+
+        return response()->json([
+            'success' => true,
+            'access_token' => $data['access_token'],
+            'refresh_token' => $data['refresh_token'] ?? null,
+            'token_type' => $data['token_type'] ?? 'Bearer',
+            'expires_in' => $data['expires_in'] ?? null,
+            'user' => $this->formatUser($user),
+        ]);
+
+    } catch (\Exception $e) {
+        \Log::error('SSO Login Error: ' . $e->getMessage());
+        \Log::error('Stack trace: ' . $e->getTraceAsString());
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal terhubung ke server autentikasi',
+            'error' => app()->environment('local') ? $e->getMessage() : null
+        ], 500);
+    }
+}
+
+    public function logout()
     {
-        session()->forget(['access_token', 'refresh_token']);
-        return redirect('/login');
+        // Karena stateless, logout cukup dilakukan di frontend
+        return response()->json([
+            'success' => true,
+            'message' => 'Logout berhasil'
+        ]);
     }
 
     public function profile(Request $request)
     {
-        // Ambil user dari middleware auth.sso
         $user = $request->auth_user;
-        
+
         if (!$user) {
             return response()->json([
                 'success' => false,
-                'message' => 'User not found'
-            ], 404);
+                'message' => 'Unauthorized'
+            ], 401);
         }
 
-        // Hitung total resep yang diapprove
         $approvedRecipesCount = \App\Models\Recipe::where('created_by', $user->id)
             ->where('status', 'approved')
             ->count();
@@ -187,11 +157,11 @@ class AuthController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'user' => $user,
+                'user' => $this->formatUser($user),
                 'stats' => [
                     'points' => $user->points ?? 0,
                     'approved_recipes' => $approvedRecipesCount,
-                    'point_per_recipe' => config('points.recipe_approved', 10)
+                    'point_per_recipe' => config('points.recipe_approved', 10),
                 ]
             ]
         ]);
@@ -199,62 +169,62 @@ class AuthController extends Controller
 
     public function updateProfile(Request $request)
     {
-        $user = $request->user();
+        $user = $request->auth_user;
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthorized'
+            ], 401);
+        }
 
         $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|string|email|max:255|unique:users,email,' . $user->id,
             'phone' => 'nullable|string|max:20',
             'gender' => 'nullable|in:L,P',
-            'birth_date' => 'nullable|date',
+            'birthdate' => 'nullable|date',
             'avatar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
         ]);
 
-        $user->name = $request->name;
-        $user->email = $request->email;
-        $user->phone = $request->phone;
-        $user->gender = $request->gender;
-        $user->birth_date = $request->birth_date;
+        $user->update([
+            'name' => $request->name,
+            'phone' => $request->phone,
+            'gender' => $request->gender,
+            'birthdate' => $request->birthdate,
+        ]);
 
-        // Handle avatar upload
         if ($request->hasFile('avatar')) {
-            // Delete old avatar if exists
             if ($user->avatar) {
                 Storage::disk('public')->delete($user->avatar);
             }
 
-            // Store new avatar
-            $avatarPath = $request->file('avatar')->store('avatars', 'public');
-            $user->avatar = $avatarPath;
+            $path = $request->file('avatar')->store('avatars', 'public');
+            $user->avatar = $path;
+            $user->save();
         }
-
-        $user->save();
 
         return response()->json([
             'success' => true,
             'message' => 'Profile berhasil diupdate',
-            'data' => $this->formatUserResponse($user)
+            'data' => $this->formatUser($user)
         ]);
     }
 
-    /**
-     * Format user response dengan avatar URL
-     */
-    private function formatUserResponse($user)
+        private function formatUser($user)
     {
         return [
             'id' => $user->id,
+            'sso_id' => $user->sso_id,
             'name' => $user->name,
             'email' => $user->email,
-            'role' => $user->role,
+            'role' => $user->role?->name ?? 'user', 
+            'role_id' => $user->role_id, // ✅ Opsional: kirim juga id-nya
             'phone' => $user->phone,
             'gender' => $user->gender,
-            'birth_date' => $user->birth_date,
-            'avatar' => $user->avatar,
+            'birthdate' => $user->birthdate,
+            'points' => $user->points ?? 0,
             'avatar_url' => $user->avatar ? Storage::url($user->avatar) : null,
-            'email_verified_at' => $user->email_verified_at,
             'created_at' => $user->created_at,
-            'updated_at' => $user->updated_at,
         ];
     }
 }

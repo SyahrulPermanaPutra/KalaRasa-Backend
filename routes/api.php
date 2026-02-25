@@ -33,6 +33,7 @@ Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::middleware('auth.sso')->group(function () {
     
     // Auth Routes
+    Route::post('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::put('/profile', [AuthController::class, 'updateProfile']);
