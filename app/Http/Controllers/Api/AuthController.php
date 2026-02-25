@@ -12,6 +12,7 @@ class AuthController extends Controller
 {
     public function login(Request $request)
 {
+    // 1. Validasi input
     $request->validate([
         'email' => 'required|email',
         'password' => 'required',
@@ -20,30 +21,28 @@ class AuthController extends Controller
         'platform' => 'required',
     ]);
 
-    $ssoBase = config('services.sso.url');
-    
-    if (!$ssoBase) {
-        $ssoBase = env('SSO_URL', 'https://hub.jtv.co.id');
-    }
-
-    $loginUrl = rtrim($ssoBase, '/') . '/api/login';
-    $loginUrl = str_replace('http://', 'https://', $loginUrl);
-
     try {
+        $ssoBase = env('SSO_URL');
+        if (empty($ssoBase)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'SSO API URL belum dikonfigurasi'
+            ], 500);
+        }
+
+        $loginUrl = rtrim($ssoBase, '/') . '/api/login';
+        
         $response = Http::withHeaders([
             'Accept' => 'application/json',
             'Content-Type' => 'application/json',
-        ])->timeout(30)->post($loginUrl, [
+        ])->post($loginUrl, [
             'email' => $request->email,
             'password' => $request->password,
             'device_uuid' => $request->device_uuid,
             'device_name' => $request->device_name,
             'platform' => $request->platform,
-            'app_id' => $request->app_id ?? config('services.sso.app_id'),
+            'app_id' => env('APP_ID'),
         ]);
-
-        \Log::info('SSO Response Status: ' . $response->status());
-        \Log::info('SSO Response Body: ', ['body' => $response->json()]);
 
         if (!$response->successful()) {
             return response()->json([
@@ -71,78 +70,120 @@ class AuthController extends Controller
                 'message' => 'Data user tidak ditemukan dari SSO'
             ], 401);
         }
-
-        // ✅ Gunakan null coalescing operator (??) untuk semua field
+        
+        // HAPUS BAGIAN INI - Tidak perlu menyimpan token
+        /*
+        // 3. Simpan atau update user di database lokal
         $user = User::updateOrCreate(
-            ['sso_id' => $ssoUser['id'] ?? null],
+            ['sso_id' => $data['user']['id']],
             [
-                'name' => $ssoUser['name'] ?? ($ssoUser['nama'] ?? 'User'),
-                'email' => $ssoUser['email'] ?? null,
-                'phone' => $ssoUser['phone'] ?? ($ssoUser['no_hp'] ?? null),
-                'gender' => $ssoUser['gender'] ?? ($ssoUser['jenis_kelamin'] ?? null),
-                'birthdate' => $ssoUser['birthdate'] ?? ($ssoUser['tanggal_lahir'] ?? null),
-                // ✅ Field role - default ke 'user' jika tidak ada
-                'role' => isset($ssoUser['role']) 
-                          ? (in_array($ssoUser['role'], ['admin', 'user']) ? $ssoUser['role'] : 'user')
-                          : 'user',
+                'name' => $data['user']['name'],
+                'email' => $data['user']['email'],
+                'phone' => $data['user']['phone'] ?? null,
+                'role' => $data['user']['role'] ?? 'user',
+                'api_token' => $data['access_token'], // HAPUS INI
+            ]
+        );
+        */
+        
+        // GANTI DENGAN INI - Hanya simpan data user tanpa token
+        $user = User::updateOrCreate(
+            ['sso_id' => $data['user']['id']],
+            [
+                'name' => $data['user']['name'],
+                'email' => $data['user']['email'],
+                'phone' => $data['user']['phone'] ?? null,
+                'role' => $data['user']['role'] ?? 'user',
+                // api_token TIDAK perlu disimpan
             ]
         );
 
-        // Simpan device information (jika tabel user_devices ada)
-        try {
-            if (class_exists(\App\Models\UserDevice::class)) {
-                \App\Models\UserDevice::updateOrCreate(
-                    [
-                        'user_id' => $user->id,
-                        'device_uuid' => $request->device_uuid,
-                    ],
-                    [
-                        'app_id' => $request->app_id ?? config('services.sso.app_id'),
-                        'device_name' => $request->device_name,
-                        'platform' => $request->platform,
-                        'last_login_at' => now(),
-                    ]
-                );
-            }
-        } catch (\Exception $e) {
-            \Log::warning('Gagal menyimpan device info: ' . $e->getMessage());
-            // Lanjutkan meskipun gagal menyimpan device
-        }
-
+        // 4. Return response dengan data dari SSO
         return response()->json([
             'success' => true,
             'access_token' => $data['access_token'],
-            'refresh_token' => $data['refresh_token'] ?? null,
-            'token_type' => $data['token_type'] ?? 'Bearer',
-            'expires_in' => $data['expires_in'] ?? null,
-            'user' => $this->formatUser($user),
+            'refresh_token' => $data['refresh_token'],
+            'token_type' => $data['token_type'],
+            'expires_in' => $data['expires_in'],
+            'user' => $this->formatUser($user) // Gunakan formatter yang sama
         ]);
 
     } catch (\Exception $e) {
-        \Log::error('SSO Login Error: ' . $e->getMessage());
-        \Log::error('Stack trace: ' . $e->getTraceAsString());
-        
+        \Log::error('Login error: ' . $e->getMessage());
         return response()->json([
             'success' => false,
-            'message' => 'Gagal terhubung ke server autentikasi',
-            'error' => app()->environment('local') ? $e->getMessage() : null
+            'message' => 'Gagal terhubung ke server SSO'
         ], 500);
     }
 }
 
-    public function logout()
+    public function logout(Request $request)
+{
+    // Beritahu SSO bahwa user logout
+    try {
+        $ssoBase = env('SSO_URL');
+        
+        Http::withHeaders([
+            'Authorization' => 'Bearer ' . $request->bearerToken()
+        ])->post(rtrim($ssoBase, '/') . '/api/logout');
+        
+    } catch (\Exception $e) {
+        \Log::warning('Logout SSO error: ' . $e->getMessage());
+        // Abaikan error, yang penting client sudah hapus token
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Logout berhasil'
+    ]);
+}
+    public function refresh(Request $request)
     {
-        // Karena stateless, logout cukup dilakukan di frontend
-        return response()->json([
-            'success' => true,
-            'message' => 'Logout berhasil'
-        ]);
+        $refreshToken = $request->input('refresh_token');
+        
+        if (!$refreshToken) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Refresh token required'
+            ], 400);
+        }
+        
+        try {
+            $ssoBase = config('services.sso.url') ?? env('SSO_URL', 'https://hub.jtv.co.id');
+            $response = Http::post(rtrim($ssoBase, '/') . '/api/refresh', [
+                'refresh_token' => $refreshToken
+            ]);
+            
+            if (!$response->successful()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to refresh token'
+                ], $response->status());
+            }
+            
+            $data = $response->json();
+            
+            return response()->json([
+                'success' => true,
+                'access_token' => $data['access_token'],
+                'refresh_token' => $data['refresh_token'] ?? null,
+                'token_type' => $data['token_type'] ?? 'Bearer',
+                'expires_in' => $data['expires_in'] ?? null,
+            ]);
+            
+        } catch (\Exception $e) {
+            \Log::error('Refresh token error: ' . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to refresh token'
+            ], 500);
+        }
     }
 
     public function profile(Request $request)
     {
-        $user = $request->auth_user;
-
+        $user = $request->user() ?? $request->auth_user;
+        
         if (!$user) {
             return response()->json([
                 'success' => false,
@@ -169,7 +210,7 @@ class AuthController extends Controller
 
     public function updateProfile(Request $request)
     {
-        $user = $request->auth_user;
+        $user = $request->auth_user ?? $request->user();
 
         if (!$user) {
             return response()->json([
@@ -210,15 +251,15 @@ class AuthController extends Controller
         ]);
     }
 
-        private function formatUser($user)
+    private function formatUser($user)
     {
         return [
             'id' => $user->id,
             'sso_id' => $user->sso_id,
             'name' => $user->name,
             'email' => $user->email,
-            'role' => $user->role?->name ?? 'user', 
-            'role_id' => $user->role_id, // ✅ Opsional: kirim juga id-nya
+            // Jika menggunakan relasi role, pastikan sudah didefinisikan di model User
+            'role' => $user->role ?? 'user',
             'phone' => $user->phone,
             'gender' => $user->gender,
             'birthdate' => $user->birthdate,

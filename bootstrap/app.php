@@ -4,7 +4,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\AdminMiddleware;
-use App\Http\Middleware\AuthSSO;
+use App\Http\Middleware\AuthenticateWithSSO;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -18,7 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Register middleware alias
         $middleware->alias([
             // 'admin' => \App\Http\Middleware\AdminMiddleware::class,
-            'auth.sso' => \App\Http\Middleware\AuthSSO::class,
+            'auth.sso' => \App\Http\Middleware\AuthenticateWithSSO::class,
             'admin' => \App\Http\Middleware\EnsureAdmin::class,
         ]);
     })

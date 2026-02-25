@@ -26,11 +26,15 @@ Route::prefix('recipe')->group(function () {
     Route::get('/{id}', [RecipeController::class, 'show']);
 });
 
-Route::post('/register', [AuthController::class, 'register']);
+Route::prefix('chatbot')->group(function () {
+        Route::get('/health', [ChatbotController::class, 'checkNLPHealth']);
+});
+
 Route::post('/login', [AuthController::class, 'login'])->name('login');
+Route::post('/refresh', [AuthController::class, 'refresh']);
 
 // Protected Routes (User & Admin)
-Route::middleware('auth.sso')->group(function () {
+Route::middleware(['auth.sso'])->group(function () {
     
     // Auth Routes
     Route::post('/me', [AuthController::class, 'me']);
@@ -41,9 +45,10 @@ Route::middleware('auth.sso')->group(function () {
 
     // Chatbot routes
     Route::prefix('chatbot')->group(function () {
-        Route::post('/message', [ChatbotController::class, 'processMessage']);
-        Route::get('/history', [ChatbotController::class, 'getHistory']);
-        Route::get('/health', [ChatbotController::class, 'checkNLPHealth']);
+        Route::post('message', [App\Http\Controllers\Api\ChatbotController::class, 'processMessage']);
+        Route::post('search', [App\Http\Controllers\Api\ChatbotController::class, 'directSearch']);
+        Route::get('history', [App\Http\Controllers\Api\ChatbotController::class, 'getHistory']);
+        Route::post('reset', [App\Http\Controllers\Api\ChatbotController::class, 'resetSession']);
     });
 
     // Recipe Routes (User)
@@ -105,6 +110,8 @@ Route::middleware('auth.sso')->group(function () {
 
             Route::patch('/{id}/approve', [AdminRecipeController::class, 'approve']);
             Route::patch('/{id}/reject', [AdminRecipeController::class, 'reject']);
+
+        
         });
     });
 });
