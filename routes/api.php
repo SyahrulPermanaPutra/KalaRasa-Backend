@@ -12,7 +12,7 @@ use App\Http\Controllers\Api\RecipeRatingController;
 use App\Http\Controllers\Api\BookmarkController;
 use App\Http\Controllers\Api\RecipeController;
 use App\Http\Controllers\Api\ChatbotController;
-use App\Http\Controllers\Api\NlpAuthController;
+use App\Http\Controllers\Api\ShoppingListItemController;
 
 /*
 |--------------------------------------------------------------------------
@@ -76,6 +76,52 @@ Route::middleware('auth:sanctum')->group(function () {
         
         // Rating statistics
         // Route::get('/ratings/statistics', [RecipeRatingController::class, 'statistics']);
+    });
+
+    // ══════════════════════════════════════════════════════════
+    // GRAFIK PENGELUARAN
+    // ══════════════════════════════════════════════════════════
+    Route::prefix('shopping-lists/grafik')->group(function () {
+        Route::get('/harian', [ShoppingListController::class, 'grafikHarian']);
+        Route::get('/mingguan', [ShoppingListController::class, 'grafikMingguan']);
+        Route::get('/bulanan', [ShoppingListController::class, 'grafikBulanan']);
+    });
+
+    // ══════════════════════════════════════════════════════════
+    // SHOPPING LIST / MEMO CRUD
+    // ══════════════════════════════════════════════════════════
+    Route::prefix('shopping-lists')->group(function () {
+        // List & Create
+        Route::get('/', [ShoppingListController::class, 'index']);
+        Route::post('/', [ShoppingListController::class, 'store']);
+        
+        // Create from recipe
+        Route::post('/from-recipe/{recipeId}', [ShoppingListController::class, 'storeFromRecipe']);
+        
+        // Show, Update, Delete
+        Route::get('/{id}', [ShoppingListController::class, 'show']);
+        Route::put('/{id}', [ShoppingListController::class, 'update']);
+        Route::patch('/{id}/status', [ShoppingListController::class, 'updateStatus']);
+        Route::delete('/{id}', [ShoppingListController::class, 'destroy']);
+        
+        // ══════════════════════════════════════════════════════════
+        // SHOPPING LIST ITEMS (Nested Routes)
+        // ══════════════════════════════════════════════════════════
+        Route::prefix('{listId}/items')->group(function () {
+            // List & Create
+            Route::get('/', [ShoppingListItemController::class, 'index']);
+            Route::post('/', [ShoppingListItemController::class, 'store']);
+            
+            // Bulk operations
+            Route::post('/bulk-toggle-purchased', [ShoppingListItemController::class, 'bulkTogglePurchased']);
+            Route::delete('/bulk-delete', [ShoppingListItemController::class, 'bulkDelete']);
+            
+            // Show, Update, Delete
+            Route::get('/{itemId}', [ShoppingListItemController::class, 'show']);
+            Route::put('/{itemId}', [ShoppingListItemController::class, 'update']);
+            Route::patch('/{itemId}/toggle-purchased', [ShoppingListItemController::class, 'togglePurchased']);
+            Route::delete('/{itemId}', [ShoppingListItemController::class, 'destroy']);
+        });
     });
 
     // Admin Routes
