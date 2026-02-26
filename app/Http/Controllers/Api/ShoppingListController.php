@@ -15,9 +15,9 @@ use Illuminate\Support\Facades\Validator;
 
 class ShoppingListController extends Controller
 {
-    // ──────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════
     // GRAFIK PENGELUARAN
-    // ──────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════
 
     /**
      * GET /api/shopping-lists/grafik/harian
@@ -37,7 +37,7 @@ class ShoppingListController extends Controller
                 ->sum('actual_price');
 
             return [
-                'label'  => $date->translatedFormat('D, d M'),   // Mis: "Sen, 03 Feb"
+                'label'  => $date->translatedFormat('D, d M'),
                 'date'   => $date->format('Y-m-d'),
                 'total'  => (float) $total,
             ];
@@ -51,7 +51,7 @@ class ShoppingListController extends Controller
             'data'    => [
                 'periode'        => '7 hari terakhir',
                 'rata_rata'      => round($avg, 2),
-                'total_periode'  => $data->sum('total'),
+                'total_periode'  => round($data->sum('total'), 2),
                 'grafik'         => $data->values(),
             ]
         ]);
@@ -90,7 +90,7 @@ class ShoppingListController extends Controller
             'data'    => [
                 'periode'       => '4 minggu terakhir',
                 'rata_rata'     => round($avg, 2),
-                'total_periode' => $data->sum('total'),
+                'total_periode' => round($data->sum('total'), 2),
                 'grafik'        => $data->values(),
             ]
         ]);
@@ -114,7 +114,7 @@ class ShoppingListController extends Controller
                 ->sum('actual_price');
 
             return [
-                'label'  => $month->translatedFormat('M Y'),   // Mis: "Jan 2025"
+                'label'  => $month->translatedFormat('M Y'),
                 'month'  => $month->format('Y-m'),
                 'total'  => (float) $total,
             ];
@@ -128,15 +128,15 @@ class ShoppingListController extends Controller
             'data'    => [
                 'periode'       => '12 bulan terakhir',
                 'rata_rata'     => round($avg, 2),
-                'total_periode' => $data->sum('total'),
+                'total_periode' => round($data->sum('total'), 2),
                 'grafik'        => $data->values(),
             ]
         ]);
     }
 
-    // ──────────────────────────────────────────────────────────
-    // MEMO / SHOPPING LIST CRUD
-    // ──────────────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════
+    // SHOPPING LIST / MEMO CRUD
+    // ══════════════════════════════════════════════════════════
 
     /**
      * GET /api/shopping-lists
@@ -152,27 +152,45 @@ class ShoppingListController extends Controller
             ->orderBy('created_at', 'desc');
 
         // Filter by status
-        if ($request->has('status')) {
+        if ($request->filled('status')) {
             $query->where('status', $request->status);
         }
 
         // Filter by tanggal
-        if ($request->has('bulan') && $request->has('tahun')) {
+        if ($request->filled('bulan') && $request->filled('tahun')) {
             $query->whereMonth('shopping_date', $request->bulan)
                   ->whereYear('shopping_date', $request->tahun);
         }
 
-        $lists = $query->paginate($request->input('per_page', 10));
+        // Search
+        if ($request->filled('search')) {
+            $query->where('nama_list', 'like', '%' . $request->search . '%');
+        }
+
+        $perPage = $request->input('per_page', 10);
+        $lists = $query->paginate($perPage);
 
         // Tambahkan summary di setiap item
         $lists->getCollection()->transform(function ($list) {
-            $list->total_items     = $list->items->count();
-            $list->purchased_items = $list->items->where('is_purchased', true)->count();
-            $list->progress        = $list->total_items > 0
-                ? round(($list->purchased_items / $list->total_items) * 100)
-                : 0;
-            unset($list->items); // Hapus items dari list (hanya summary)
-            return $list;
+            $totalItems = $list->items->count();
+            $purchasedItems = $list->items->where('is_purchased', true)->count();
+            
+            return [
+                'id'                    => $list->id,
+                'nama_list'             => $list->nama_list,
+                'shopping_date'         => $list->shopping_date,
+                'status'                => $list->status,
+                'catatan'               => $list->catatan,
+                'recipe'                => $list->recipe,
+                'total_items'           => $totalItems,
+                'purchased_items'       => $purchasedItems,
+                'remaining_items'       => $totalItems - $purchasedItems,
+                'progress'              => $totalItems > 0 ? round(($purchasedItems / $totalItems) * 100) : 0,
+                'total_estimated_price' => (float) $list->total_estimated_price,
+                'total_actual_price'    => (float) $list->total_actual_price,
+                'created_at'            => $list->created_at,
+                'updated_at'            => $list->updated_at,
+            ];
         });
 
         return response()->json([
@@ -189,10 +207,11 @@ class ShoppingListController extends Controller
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'nama_list'     => 'required|string|max:255',
-            'shopping_date' => 'nullable|date',
-            'catatan'       => 'nullable|string',
-            'items'         => 'nullable|array',
+            'nama_list'               => 'required|string|max:255',
+            'shopping_date'           => 'nullable|date',
+            'catatan'                 => 'nullable|string',
+            'items'                   => 'nullable|array',
+            'items.*.ingredient_id'   => 'nullable|exists:ingredients,id',
             'items.*.nama_item'       => 'required_with:items|string|max:255',
             'items.*.jumlah'          => 'required_with:items|numeric|min:0',
             'items.*.satuan'          => 'required_with:items|string|max:50',
@@ -214,16 +233,17 @@ class ShoppingListController extends Controller
             $list = ShoppingList::create([
                 'user_id'       => $request->user()->id,
                 'nama_list'     => $request->nama_list,
-                'shopping_date' => $request->shopping_date,
+                'shopping_date' => $request->shopping_date ?? now()->format('Y-m-d'),
                 'catatan'       => $request->catatan,
                 'status'        => 'pending',
             ]);
 
             // Tambahkan items jika ada
-            if ($request->has('items')) {
+            if ($request->filled('items')) {
                 foreach ($request->items as $item) {
                     ShoppingListItem::create([
                         'shopping_list_id' => $list->id,
+                        'ingredient_id'    => $item['ingredient_id'] ?? null,
                         'nama_item'        => $item['nama_item'],
                         'jumlah'           => $item['jumlah'],
                         'satuan'           => $item['satuan'],
@@ -273,9 +293,8 @@ class ShoppingListController extends Controller
             ], 422);
         }
 
-        $recipe = Recipe::approved()
-            ->with('ingredients')
-            ->findOrFail($recipeId);
+        // Cari recipe dengan relasi ingredients
+        $recipe = Recipe::with('ingredients')->findOrFail($recipeId);
 
         DB::beginTransaction();
         try {
@@ -290,33 +309,39 @@ class ShoppingListController extends Controller
             ]);
 
             // Auto-fill items dari bahan recipe
-            if ($recipe->ingredients->count() > 0) {
+            if ($recipe->ingredients && $recipe->ingredients->count() > 0) {
                 // Jika relasi ingredients ada
                 foreach ($recipe->ingredients as $ingredient) {
                     ShoppingListItem::create([
                         'shopping_list_id' => $list->id,
                         'ingredient_id'    => $ingredient->id,
                         'nama_item'        => $ingredient->nama,
-                        'jumlah'           => $ingredient->pivot->jumlah,
-                        'satuan'           => $ingredient->pivot->satuan,
+                        'jumlah'           => $ingredient->pivot->jumlah ?? 1,
+                        'satuan'           => $ingredient->pivot->satuan ?? 'pcs',
                         'estimated_price'  => $ingredient->avg_price ?? 0,
-                        'catatan'          => $ingredient->pivot->keterangan,
+                        'catatan'          => $ingredient->pivot->keterangan ?? null,
                     ]);
                 }
             } elseif (!empty($recipe->bahan_makanan)) {
                 // Fallback: Jika pakai JSON bahan_makanan
-                foreach ($recipe->bahan_makanan as $bahan) {
-                    $namaItem = is_array($bahan) ? ($bahan['nama'] ?? 'Unknown') : $bahan;
-                    $jumlah   = is_array($bahan) ? ($bahan['jumlah'] ?? 1) : 1;
-                    $satuan   = is_array($bahan) ? ($bahan['satuan'] ?? 'pcs') : 'pcs';
+                $bahanMakanan = is_string($recipe->bahan_makanan) 
+                    ? json_decode($recipe->bahan_makanan, true) 
+                    : $recipe->bahan_makanan;
 
-                    ShoppingListItem::create([
-                        'shopping_list_id' => $list->id,
-                        'nama_item'        => $namaItem,
-                        'jumlah'           => $jumlah,
-                        'satuan'           => $satuan,
-                        'estimated_price'  => 0,
-                    ]);
+                if (is_array($bahanMakanan)) {
+                    foreach ($bahanMakanan as $bahan) {
+                        $namaItem = is_array($bahan) ? ($bahan['nama'] ?? 'Unknown') : $bahan;
+                        $jumlah   = is_array($bahan) ? ($bahan['jumlah'] ?? 1) : 1;
+                        $satuan   = is_array($bahan) ? ($bahan['satuan'] ?? 'pcs') : 'pcs';
+
+                        ShoppingListItem::create([
+                            'shopping_list_id' => $list->id,
+                            'nama_item'        => $namaItem,
+                            'jumlah'           => $jumlah,
+                            'satuan'           => $satuan,
+                            'estimated_price'  => 0,
+                        ]);
+                    }
                 }
             }
 
@@ -351,8 +376,8 @@ class ShoppingListController extends Controller
             ])
             ->findOrFail($id);
 
-        $items         = $list->items;
-        $totalItems    = $items->count();
+        $items          = $list->items;
+        $totalItems     = $items->count();
         $purchasedItems = $items->where('is_purchased', true)->count();
 
         return response()->json([
@@ -407,7 +432,7 @@ class ShoppingListController extends Controller
 
     /**
      * PUT /api/shopping-lists/{id}
-     * Update memo (nama, tanggal, catatan)
+     * Update memo (nama, tanggal, catatan, status)
      */
     public function update(Request $request, $id)
     {
@@ -417,6 +442,7 @@ class ShoppingListController extends Controller
             'nama_list'     => 'sometimes|string|max:255',
             'shopping_date' => 'sometimes|date',
             'catatan'       => 'nullable|string',
+            'status'        => 'sometimes|in:pending,completed,cancelled',
         ]);
 
         if ($validator->fails()) {
@@ -427,12 +453,41 @@ class ShoppingListController extends Controller
             ], 422);
         }
 
-        $list->update($request->only(['nama_list', 'shopping_date', 'catatan']));
+        $list->update($request->only(['nama_list', 'shopping_date', 'catatan', 'status']));
 
         return response()->json([
             'success' => true,
             'message' => 'Memo berhasil diupdate',
             'data'    => $list->load('items'),
+        ]);
+    }
+
+    /**
+     * PATCH /api/shopping-lists/{id}/status
+     * Update status shopping list
+     */
+    public function updateStatus(Request $request, $id)
+    {
+        $list = ShoppingList::where('user_id', $request->user()->id)->findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'status' => 'required|in:pending,completed,cancelled',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validasi gagal',
+                'errors'  => $validator->errors()
+            ], 422);
+        }
+
+        $list->update(['status' => $request->status]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Status berhasil diupdate',
+            'data'    => $list,
         ]);
     }
 
@@ -443,11 +498,30 @@ class ShoppingListController extends Controller
     public function destroy(Request $request, $id)
     {
         $list = ShoppingList::where('user_id', $request->user()->id)->findOrFail($id);
-        $list->delete();
+        
+        DB::beginTransaction();
+        try {
+            // Hapus semua items terkait
+            $list->items()->delete();
+            
+            // Hapus expenses terkait (jika ada)
+            Expense::where('shopping_list_id', $list->id)->delete();
+            
+            // Hapus shopping list
+            $list->delete();
+            
+            DB::commit();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Memo berhasil dihapus',
-        ]);
+            return response()->json([
+                'success' => true,
+                'message' => 'Memo berhasil dihapus',
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal menghapus memo: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 }
