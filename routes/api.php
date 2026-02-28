@@ -55,6 +55,9 @@ Route::middleware(['auth.sso'])->group(function () {
     Route::prefix('recipe')->group(function () {
         Route::get('/recipes/create', [RecipeController::class, 'create'])->name('recipes.create');
         Route::post('/recipes', [RecipeController::class, 'store'])->name('recipes.store');
+        Route::put('/recipes/{id}', [RecipeController::class, 'update'])->name('recipes.update');
+        Route::patch('/recipes/{id}', [RecipeController::class, 'update'])->name('recipes.patch');
+        Route::delete('/recipes/{id}', [RecipeController::class, 'destroy'])->name('recipes.destroy');
         Route::get('/recipes/{recipe}', [RecipeController::class, 'show'])->name('recipes.show');
         Route::post('/{id}/add-to-shopping-list', [RecipeController::class, 'addToShoppingList']);
         Route::post('/{id}/toggle-favorite', [RecipeController::class, 'toggleFavorite']);
@@ -131,11 +134,12 @@ Route::middleware(['auth.sso'])->group(function () {
     });
 
     // Admin Routes
-    Route::prefix('admin')->middleware('admin')->group(function () {        
+    Route::prefix('admin')->middleware('auth.sso')->group(function () {        
         // User Management
         Route::prefix('user')->group(function () {
             Route::get('/', [AdminUserController::class, 'index']);               
-            Route::get('/{id}', [AdminUserController::class, 'show']);            
+            Route::get('/{id}', [AdminUserController::class, 'show']);  
+            Route::delete('/{id}', [AdminUserController::class, 'destroy']);          
         });
 
         // Dashboard sesuai desain
@@ -151,7 +155,8 @@ Route::middleware(['auth.sso'])->group(function () {
             Route::get('/{id}', [AdminRecipeController::class, 'show']);
 
             Route::post('/', [AdminRecipeController::class, 'store']);
-            Route::post('/{id}', [AdminRecipeController::class, 'update']);
+            Route::patch('/{id}', [AdminRecipeController::class, 'update']);
+            Route::put('/{id}', [AdminRecipeController::class, 'update']);
             Route::delete('/{id}', [AdminRecipeController::class, 'destroy']);
 
             Route::patch('/{id}/approve', [AdminRecipeController::class, 'approve']);

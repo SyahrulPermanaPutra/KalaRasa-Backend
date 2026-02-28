@@ -130,65 +130,77 @@ class ChatbotController extends Controller
      * Direct CBR search tanpa melalui percakapan.
      */
     public function directSearch(Request $request)
-    {
-        $request->validate([
-            'session_id'            => 'required|string',
-            'ingredients'           => 'array',
-            'avoid_ingredients'     => 'array',
-            'health_conditions'     => 'array',
-            'time_constraint'       => 'nullable|integer|min:5|max:480',
-            'region'                => 'nullable|string|max:100',
-            'top_k'                 => 'integer|min:1|max:10',
-        ]);
+{
+    $request->validate([
+        'session_id'            => 'required|string',
+        'search_name'           => 'nullable|string|max:200',  // ✨ Baru
+        'ingredients'           => 'array',
+        'avoid_ingredients'     => 'array',
+        'health_conditions'     => 'array',
+        'time_constraint'       => 'nullable|integer|min:5|max:480',
+        'region'                => 'nullable|string|max:100',
+        'top_k'                 => 'integer|min:1|max:20',
+    ]);
 
-        $user = $request->auth_user ?? $request->user();
-        
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
-        }
+    $user = $request->auth_user ?? $request->user();
+    if (!$user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
 
-        $entities = [
-            'ingredients' => [
-                'main'  => $request->input('ingredients', []),
-                'avoid' => $request->input('avoid_ingredients', []),
-            ],
-            'health_conditions' => $request->input('health_conditions', []),
-            'time_constraint'   => $request->input('time_constraint'),
-            'region'            => $request->input('region'),
-        ];
-
-        $queryText = $this->buildQueryText($entities);
-
-        $cbrResult = $this->callNlpMatchRecipes(
-            $request->session_id,
-            $user->id,
-            $queryText,
-            $entities,
-            $request->input('top_k', 5)
+    // ✨ LOGIKA BARU: Jika ada search_name, prioritaskan pencarian nama
+    if (!empty($request->input('search_name'))) {
+        $recipes = $this->searchRecipesByName(
+            $request->input('search_name'),
+            $request->input('top_k', 10),
+            $request->input('health_conditions', []), // Optional filter tambahan
+            $request->input('time_constraint')
         );
-
-        if (! ($cbrResult['success'] ?? false)) {
-            return $this->errorResponse('Gagal mencari resep. Silakan coba lagi.');
-        }
-
-        $recipes = $this->hydrateRecipes($cbrResult['matched_recipes'] ?? []);
 
         return response()->json([
             'success'  => true,
             'type'     => 'recipe_results',
+            'search_type' => 'name_search',  // ✨ Info tipe pencarian
+            'search_query' => $request->input('search_name'),
             'recipes'  => $recipes,
             'total'    => count($recipes),
-            'cbr_meta' => [
-                'from_cache'       => $cbrResult['from_cache'] ?? false,
-                'total_candidates' => $cbrResult['total_candidates'] ?? 0,
-                'query_hash'       => $cbrResult['query_hash'] ?? null,
-                'algorithm'        => $cbrResult['cbr_metadata']['algorithm'] ?? 'CBR',
-            ],
         ]);
     }
+
+    // 🔄 Fallback ke CBR matching (logic lama)
+    $entities = [
+        'ingredients' => [
+            'main'  => $request->input('ingredients', []),
+            'avoid' => $request->input('avoid_ingredients', []),
+        ],
+        'health_conditions' => $request->input('health_conditions', []),
+        'time_constraint'   => $request->input('time_constraint'),
+        'region'            => $request->input('region'),
+    ];
+
+    $queryText = $this->buildQueryText($entities);
+    $cbrResult = $this->callNlpMatchRecipes(
+        $request->session_id,
+        $user->id,
+        $queryText,
+        $entities,
+        $request->input('top_k', 5)
+    );
+
+    if (!($cbrResult['success'] ?? false)) {
+        return $this->errorResponse('Gagal mencari resep. Silakan coba lagi.');
+    }
+
+    $recipes = $this->hydrateRecipes($cbrResult['matched_recipes'] ?? []);
+
+    return response()->json([
+        'success'  => true,
+        'type'     => 'recipe_results',
+        'search_type' => 'cbr_match',  // ✨ Info tipe pencarian
+        'recipes'  => $recipes,
+        'total'    => count($recipes),
+        'cbr_meta' => [ /* ... */ ],
+    ]);
+}
 
     /**
      * Get chat history

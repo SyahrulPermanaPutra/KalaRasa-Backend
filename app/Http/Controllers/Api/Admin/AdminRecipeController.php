@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Recipe;
 use App\Models\RecipeIngredient;
+use App\Models\Role;
 use App\Services\RecipeClassificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
@@ -65,11 +66,11 @@ class AdminRecipeController extends Controller
     public function store(Request $request)
     {
         // 1. Cek Role Admin
-        if ($request->user()->role !== 'admin') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized - Admin only'
-            ], 403);
+        if (!$request->user()->relationLoaded('role')) {
+            $request->user()->load('role');
+        }
+        if ($request->user()->role?->name !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
         }
 
         // 2. Validasi Input (Sesuaikan dengan struktur RecipeController)
@@ -265,11 +266,11 @@ class AdminRecipeController extends Controller
         }
 
         // 1. Cek Role Admin
-        if ($request->user()->role !== 'admin') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized - Admin only'
-            ], 403);
+        if (!$request->user()->relationLoaded('role')) {
+            $request->user()->load('role');
+        }
+        if ($request->user()->role?->name !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
         }
 
         // 2. Cari Recipe
@@ -455,11 +456,11 @@ class AdminRecipeController extends Controller
 
     public function destroy(Request $request, $id)
     {
-        if ($request->user()->role !== 'admin') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 403);
+        if (!$request->user()->relationLoaded('role')) {
+            $request->user()->load('role');
+        }
+        if ($request->user()->role?->name !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
         }
 
         $recipe = Recipe::findOrFail($id);
@@ -498,11 +499,11 @@ class AdminRecipeController extends Controller
 
     public function approve(Request $request, $id)
     {
-        if ($request->user()->role !== 'admin') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 403);
+       if (!$request->user()->relationLoaded('role')) {
+            $request->user()->load('role');
+        }
+        if ($request->user()->role?->name !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
         }
 
         $recipe = Recipe::findOrFail($id);
@@ -563,11 +564,11 @@ class AdminRecipeController extends Controller
 
     public function reject(Request $request, $id)
     {
-        if ($request->user()->role !== 'admin') {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 403);
+        if (!$request->user()->relationLoaded('role')) {
+            $request->user()->load('role');
+        }
+        if ($request->user()->role?->name !== 'admin') {
+            return response()->json(['success' => false, 'message' => 'Unauthorized'], 403);
         }
 
         $recipe = Recipe::findOrFail($id);

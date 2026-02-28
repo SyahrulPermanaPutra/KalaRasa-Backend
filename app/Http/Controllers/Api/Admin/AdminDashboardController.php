@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Recipe;
+use App\Models\Role;
 use Illuminate\Http\Request;
 
 class AdminDashboardController extends Controller
@@ -14,10 +15,11 @@ class AdminDashboardController extends Controller
      */
     public function summary()
     {
-        $totalUsers = User::whereIn('role', ['user','admin'])->count();
+        // Ambil ID role 'user' dan 'admin' dari tabel roles
+        $roleIds = Role::whereIn('name', ['user', 'admin'])->pluck('id');
 
+        $totalUsers = User::whereIn('role_id', $roleIds)->count();
         $totalRecipes = Recipe::count();
-
         $totalSubmissions = Recipe::where('status', 'pending')->count();
 
         return response()->json([
@@ -35,15 +37,13 @@ class AdminDashboardController extends Controller
      */
     public function recipeSubmissions(Request $request)
     {
-        $allowedPerPage = [10,25,50,100];
-        $perPage = $request->input('per_page', 10);
+        $allowedPerPage = [10, 25, 50, 100];
+        $perPage = in_array($request->input('per_page', 10), $allowedPerPage) 
+            ? $request->input('per_page', 10) 
+            : 10;
 
-        if (!in_array($perPage, $allowedPerPage)) {
-            $perPage = 10;
-        }
-
-        $recipes = Recipe::where('status','pending')
-            ->with('creator:id,name,email') // pastikan relasi creator ada
+        $recipes = Recipe::where('status', 'pending')
+            ->with('creator:id,name,email') // ← Pastikan relasi 'creator' ada di Model Recipe
             ->latest()
             ->paginate($perPage);
 

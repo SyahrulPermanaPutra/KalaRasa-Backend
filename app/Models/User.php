@@ -2,50 +2,58 @@
 
 namespace App\Models;
 
+use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
-use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Log;
-use App\Models\recipe;
+use App\Models\Recipe;
+
 class User extends Authenticatable
 {
     use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
         'sso_id',
+        'sso_raw',
         'name',
         'email',
         'password',
         'role_id',
         'phone',
-        'address',
-        'avatar',
         'gender',
-        'birth_date',
+        'birthdate',
         'points',
+        'email_verified_at',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
-        'points' => 'integer'
+        'sso_raw',
     ];
 
     protected $casts = [
-        'role' => 'string',
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
+        'sso_raw' => 'array',
+        'birthdate' => 'date',
+        'points' => 'integer',
     ];
+
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
 
     public function isAdmin(): bool
     {
-        return $this->role === 'admin';
+        return $this->role && $this->role->name === 'admin';
     }
 
     public function isUser(): bool
     {
-        return $this->role === 'user';
+        return $this->role && $this->role->name === 'user';
     }
 
     /**
@@ -94,7 +102,6 @@ class User extends Authenticatable
 
     public function bookmarks()
     {
-        // Parameter ke-2 adalah nama tabel pivot ('bookmarks')
         return $this->belongsToMany(Recipe::class, 'bookmarks', 'user_id', 'recipe_id')
                     ->withTimestamps();
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Role; 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -72,16 +73,77 @@ class AuthController extends Controller
         }
         
         // GANTI DENGAN INI - Hanya simpan data user tanpa token
-        $user = User::updateOrCreate(
-            ['sso_id' => $data['user']['id']],
-            [
-                'name' => $data['user']['name'],
-                'email' => $data['user']['email'],
-                'phone' => $data['user']['phone'] ?? null,
-                'role' => $data['user']['role'] ?? 'user',
-                // api_token TIDAK perlu disimpan
-            ]
-        );
+        if (isset($response['user'])) {
+                $sso = $response['user'];
+
+                session(['user_name' => $sso['name'] ?? 'User']);
+                session(['user_email' => $sso['email'] ?? 'user@example.com']);
+
+                // Sync to database (create or update)
+                $ssoId = $sso['id'] ?? null;
+                $email = $sso['email'] ?? null;
+
+                $phone = $sso['phone'] ?? $sso['phone_number'] ?? $sso['no_telp'] ?? null;
+                $gender = $sso['gender'] ?? null;
+                $birthdate = $sso['birthdate'] ?? null;
+
+                $user = null;
+                if ($ssoId) {
+                    $user = User::where('sso_id', $ssoId)->first();
+                }
+                if (!$user && $email) {
+                    $user = User::where('email', $email)->first();
+                }
+
+                if (!$user) {
+                    $user = new User();
+                }
+
+                $user->sso_id = $ssoId ?? $user->sso_id;
+                $user->name = $sso['name'] ?? $user->name;
+                $user->email = $sso['email'] ?? $user->email;
+                $user->phone = $phone ?? $user->phone;
+                $user->gender = $gender ?? $user->gender;
+                if ($birthdate) {
+                    // try to store as Y-m-d; leave raw if not parseable
+                    $user->birthdate = $birthdate;
+                }
+                $user->sso_raw = $sso;
+
+                // assign role if provided by SSO
+                if (!empty($sso['role'])) {
+                    $roleName = $sso['role'];
+                    $role = Role::firstOrCreate(['name' => $roleName]);
+                    $user->role_id = $role->id;
+                    session(['user_role' => $roleName]);
+                }
+
+                $user->save();
+
+                // If user has no role, assign default 'customer'
+                if (empty($user->role_id)) {
+                    $customerRole = Role::firstOrCreate(
+                        ['name' => 'customer'],
+                        ['display_name' => 'Customer']
+                    );
+                    $user->role_id = $customerRole->id;
+                    $user->save();
+                    session(['user_role' => $customerRole->name]);
+                } else {
+                    // ensure session reflects assigned role
+                    if ($user->role) {
+                        session(['user_role' => $user->role->name]);
+                    }
+                }
+
+                // Store sso id in session (now that it's available)
+                session(['user_sso_id' => $ssoId]);
+
+                // Set some handy session values
+                session(['user_gender' => $gender]);
+                session(['user_birthdate' => $birthdate]);
+                session(['user_phone' => $phone]);
+            }
 
         // 4. Return response dengan data dari SSO
         return response()->json([
@@ -135,7 +197,7 @@ class AuthController extends Controller
         
         try {
             $ssoBase = config('services.sso.url') ?? env('SSO_URL', 'https://hub.jtv.co.id');
-            $response = Http::post(rtrim($ssoBase, '/') . '/api/refresh', [
+            $response = Http::post(rtrim($ssoBase, '/') . '/api/refresh-token', [
                 'refresh_token' => $refreshToken
             ]);
             
@@ -194,37 +256,38 @@ class AuthController extends Controller
     }
 
     public function updateProfile(Request $request)
-    {
-        $user = $request->auth_user ?? $request->user();
+{
+    $user = $request->auth_user ?? $request->user();
 
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
-        }
-
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'nullable|string|max:20',
-            'gender' => 'nullable|in:L,P',
-            'birthdate' => 'nullable|date',
-            'avatar' => 'nullable|image|mimes:jpeg,png,jpg|max:2048',
-        ]);
-
-        $user->update([
-            'name' => $request->name,
-            'phone' => $request->phone,
-            'gender' => $request->gender,
-            'birthdate' => $request->birthdate,
-        ]);
-
+    if (!$user) {
         return response()->json([
-            'success' => true,
-            'message' => 'Profile berhasil diupdate',
-            'data' => $this->formatUser($user)
-        ]);
+            'success' => false,
+            'message' => 'Unauthorized'
+        ], 401);
     }
+
+    $validated = $request->validate([
+        'name'      => 'required|string|max:255',
+        'phone'     => 'nullable|string|max:20',
+        'gender'    => 'nullable|in:Pria,Wanita',
+        'birthdate' => 'nullable|date',
+    ]);
+
+    // Hanya update field yang dikirim (hindari null overwrite)
+    $updateData = array_filter($validated, function ($key) use ($request) {
+        return $request->has($key);
+    }, ARRAY_FILTER_USE_KEY);
+
+    if (!empty($updateData)) {
+        $user->update($updateData);
+    }
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Profile berhasil diupdate',
+        'data' => $this->formatUser($user)
+    ]);
+}
 
     private function formatUser($user)
     {
@@ -233,13 +296,11 @@ class AuthController extends Controller
             'sso_id' => $user->sso_id,
             'name' => $user->name,
             'email' => $user->email,
-            // Jika menggunakan relasi role, pastikan sudah didefinisikan di model User
             'role' => $user->role ?? 'user',
             'phone' => $user->phone,
             'gender' => $user->gender,
             'birthdate' => $user->birthdate,
             'points' => $user->points ?? 0,
-            'avatar_url' => $user->avatar ? Storage::url($user->avatar) : null,
             'created_at' => $user->created_at,
         ];
     }
