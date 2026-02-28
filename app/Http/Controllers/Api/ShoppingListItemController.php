@@ -21,28 +21,44 @@ class ShoppingListItemController extends Controller
         $list = ShoppingList::where('user_id', $request->user()->id)
             ->findOrFail($listId);
 
-        $items = $list->items()
-            ->with('ingredient:id,nama,satuan')
-            ->orderBy('is_purchased', 'asc')
-            ->orderBy('created_at', 'asc')
-            ->get();
+            $items = $list->items()
+                ->with('ingredient:id,nama')
+                ->orderBy('is_purchased', 'asc')
+                ->orderBy('created_at', 'asc')
+                ->get();
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Item berhasil diambil',
-            'data'    => $items->map(fn($item) => [
-                'id'              => $item->id,
-                'nama_item'       => $item->nama_item,
-                'jumlah'          => (float) $item->jumlah,
-                'satuan'          => $item->satuan,
-                'estimated_price' => (float) $item->estimated_price,
-                'actual_price'    => $item->actual_price ? (float) $item->actual_price : null,
-                'is_purchased'    => $item->is_purchased,
-                'purchased_at'    => $item->purchased_at,
-                'catatan'         => $item->catatan,
-                'ingredient'      => $item->ingredient,
-            ]),
-        ]);
+            // Ambil mapping jumlah dan satuan dari recipe_ingredient
+            $recipeIngredients = [];
+            if ($list->recipe_id) {
+                $recipeIngredients = \App\Models\RecipeIngredient::where('recipe_id', $list->recipe_id)
+                    ->get()
+                    ->keyBy('ingredient_id');
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Item berhasil diambil',
+                'data'    => $items->map(function($item) use ($recipeIngredients) {
+                    $jumlah = $item->jumlah;
+                    $satuan = $item->satuan;
+                    if ($item->ingredient_id && isset($recipeIngredients[$item->ingredient_id])) {
+                        $jumlah = $recipeIngredients[$item->ingredient_id]->jumlah;
+                        $satuan = $recipeIngredients[$item->ingredient_id]->satuan;
+                    }
+                    return [
+                        'id'              => $item->id,
+                        'nama_item'       => $item->nama_item,
+                        'jumlah'          => (float) $jumlah,
+                        'satuan'          => $satuan,
+                        'estimated_price' => (float) $item->estimated_price,
+                        'actual_price'    => $item->actual_price ? (float) $item->actual_price : null,
+                        'is_purchased'    => $item->is_purchased,
+                        'ingredient'      => $item->ingredient,
+                        'catatan'         => $item->catatan,
+                        'purchased_at'    => $item->purchased_at,
+                    ];
+                }),
+            ]);
     }
 
     /**
@@ -100,9 +116,23 @@ class ShoppingListItemController extends Controller
         $list = ShoppingList::where('user_id', $request->user()->id)
             ->findOrFail($listId);
 
-        $item = ShoppingListItem::where('shopping_list_id', $list->id)
-            ->with('ingredient:id,nama,satuan')
+        $item = ShoppingListItem::where('shopping_list_id', $listId)
+            ->with('ingredient:id,nama')
             ->findOrFail($itemId);
+
+        // Ambil mapping jumlah dan satuan dari recipe_ingredient
+        $list = ShoppingList::find($listId);
+        $jumlah = $item->jumlah;
+        $satuan = $item->satuan;
+        if ($list && $list->recipe_id && $item->ingredient_id) {
+            $recipeIngredient = \App\Models\RecipeIngredient::where('recipe_id', $list->recipe_id)
+                ->where('ingredient_id', $item->ingredient_id)
+                ->first();
+            if ($recipeIngredient) {
+                $jumlah = $recipeIngredient->jumlah;
+                $satuan = $recipeIngredient->satuan;
+            }
+        }
 
         return response()->json([
             'success' => true,
@@ -110,8 +140,8 @@ class ShoppingListItemController extends Controller
             'data'    => [
                 'id'              => $item->id,
                 'nama_item'       => $item->nama_item,
-                'jumlah'          => (float) $item->jumlah,
-                'satuan'          => $item->satuan,
+                'jumlah'          => (float) $jumlah,
+                'satuan'          => $satuan,
                 'estimated_price' => (float) $item->estimated_price,
                 'actual_price'    => $item->actual_price ? (float) $item->actual_price : null,
                 'is_purchased'    => $item->is_purchased,
@@ -120,7 +150,7 @@ class ShoppingListItemController extends Controller
                 'ingredient'      => $item->ingredient,
                 'created_at'      => $item->created_at,
                 'updated_at'      => $item->updated_at,
-            ],
+            ]
         ]);
     }
 
@@ -418,6 +448,22 @@ class ShoppingListItemController extends Controller
 
         DB::beginTransaction();
         try {
+            // Ambil semua item yang valid
+            $items = ShoppingListItem::whereIn('id', $request->item_ids)
+                ->where('shopping_list_id', $list->id)
+                ->get();
+
+            $notFound = array_diff($request->item_ids, $items->pluck('id')->toArray());
+
+            if (count($notFound) > 0) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Beberapa item tidak ditemukan: ' . implode(', ', $notFound),
+                    'not_found_ids' => $notFound,
+                ], 404);
+            }
+
             // Hapus expenses terkait
             Expense::whereIn('shopping_list_item_id', $request->item_ids)->delete();
 
@@ -436,14 +482,14 @@ class ShoppingListItemController extends Controller
                 'message' => "Berhasil menghapus {$deletedCount} item",
                 'data'    => [
                     'deleted_count' => $deletedCount,
-                ],
+                ]
             ]);
 
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'Gagal menghapus items: ' . $e->getMessage(),
+                'message' => 'Gagal menghapus item: ' . $e->getMessage(),
             ], 500);
         }
     }

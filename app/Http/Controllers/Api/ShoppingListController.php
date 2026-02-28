@@ -146,7 +146,7 @@ class ShoppingListController extends Controller
     {
         $query = ShoppingList::where('user_id', $request->user()->id)
             ->with([
-                'recipe:id,nama_recipe,gambar',
+                'recipe:id,nama,gambar',
                 'items',
             ])
             ->orderBy('created_at', 'desc');
@@ -302,7 +302,7 @@ class ShoppingListController extends Controller
             $list = ShoppingList::create([
                 'user_id'       => $request->user()->id,
                 'recipe_id'     => $recipe->id,
-                'nama_list'     => $request->nama_list ?? 'Belanja - ' . $recipe->nama_recipe,
+                'nama_list'     => $request->nama_list ?? 'Belanja - ' . $recipe->nama,
                 'shopping_date' => $request->shopping_date ?? now()->format('Y-m-d'),
                 'catatan'       => $request->catatan,
                 'status'        => 'pending',
@@ -350,8 +350,8 @@ class ShoppingListController extends Controller
 
             return response()->json([
                 'success' => true,
-                'message' => 'Memo berhasil dibuat dari resep ' . $recipe->nama_recipe,
-                'data'    => $list->load(['items', 'recipe:id,nama_recipe,gambar']),
+                'message' => 'Memo berhasil dibuat dari resep ' . $recipe->nama,
+                'data'    => $list->load(['items', 'recipe:id,nama,gambar']),
             ], 201);
 
         } catch (\Exception $e) {
@@ -371,14 +371,22 @@ class ShoppingListController extends Controller
     {
         $list = ShoppingList::where('user_id', $request->user()->id)
             ->with([
-                'recipe:id,nama_recipe,gambar,kategori',
-                'items.ingredient:id,nama,satuan',
+                'recipe:id,nama,gambar,kategori',
+                'items.ingredient:id,nama',
             ])
             ->findOrFail($id);
 
         $items          = $list->items;
         $totalItems     = $items->count();
         $purchasedItems = $items->where('is_purchased', true)->count();
+
+        // Ambil mapping jumlah dan satuan dari recipe_ingredient
+        $recipeIngredients = [];
+        if ($list->recipe_id) {
+            $recipeIngredients = \App\Models\RecipeIngredient::where('recipe_id', $list->recipe_id)
+                ->get()
+                ->keyBy('ingredient_id');
+        }
 
         return response()->json([
             'success' => true,
@@ -411,18 +419,26 @@ class ShoppingListController extends Controller
                 ],
 
                 // Item belanja
-                'items' => $items->map(fn($item) => [
-                    'id'              => $item->id,
-                    'nama_item'       => $item->nama_item,
-                    'jumlah'          => (float) $item->jumlah,
-                    'satuan'          => $item->satuan,
-                    'estimated_price' => (float) $item->estimated_price,
-                    'actual_price'    => $item->actual_price ? (float) $item->actual_price : null,
-                    'is_purchased'    => $item->is_purchased,
-                    'purchased_at'    => $item->purchased_at,
-                    'catatan'         => $item->catatan,
-                    'ingredient'      => $item->ingredient,
-                ]),
+                'items' => $items->map(function($item) use ($recipeIngredients) {
+                    $jumlah = $item->jumlah;
+                    $satuan = $item->satuan;
+                    if ($item->ingredient_id && isset($recipeIngredients[$item->ingredient_id])) {
+                        $jumlah = $recipeIngredients[$item->ingredient_id]->jumlah;
+                        $satuan = $recipeIngredients[$item->ingredient_id]->satuan;
+                    }
+                    return [
+                        'id'              => $item->id,
+                        'nama_item'       => $item->nama_item,
+                        'jumlah'          => (float) $jumlah,
+                        'satuan'          => $satuan,
+                        'estimated_price' => (float) $item->estimated_price,
+                        'actual_price'    => $item->actual_price ? (float) $item->actual_price : null,
+                        'is_purchased'    => $item->is_purchased,
+                        'purchased_at'    => $item->purchased_at,
+                        'catatan'         => $item->catatan,
+                        'ingredient'      => $item->ingredient,
+                    ];
+                }),
 
                 'created_at' => $list->created_at,
                 'updated_at' => $list->updated_at,
