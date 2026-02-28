@@ -102,6 +102,7 @@ class User extends Authenticatable
 
     public function bookmarks()
     {
+        // Parameter ke-2 adalah nama tabel pivot ('bookmarks')
         return $this->belongsToMany(Recipe::class, 'bookmarks', 'user_id', 'recipe_id')
                     ->withTimestamps();
     }

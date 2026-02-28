@@ -106,6 +106,7 @@ class RecipeController extends Controller
 
     public function store(StoreRecipeRequest $request)
     {
+        $user = $request->user();
         try {
             $fallbackIngredients = [];
             
@@ -417,6 +418,8 @@ class RecipeController extends Controller
             'has_rated' => false
         ];
         
+        $isFavorited = false;
+        $userData = null;
         if ($request->user()) {
             $userData = [
                 'is_favorited' => Bookmark::where('user_id', $request->user()->id)

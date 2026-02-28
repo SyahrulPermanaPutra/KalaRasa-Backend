@@ -493,4 +493,8 @@ class ShoppingListItemController extends Controller
             ], 500);
         }
     }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> 318de4113e9ec9047d5232e66bad19e1b8c840a7
