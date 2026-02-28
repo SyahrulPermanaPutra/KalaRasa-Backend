@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\User;
 
 class Recipe extends Model
 {
@@ -71,6 +72,14 @@ class Recipe extends Model
                     ->withPivot('jumlah')
                     ->wherePivot('is_main', true)
                     ->withTimestamps();
+    }
+
+    /**
+     * Get the health condition suitabilities for this recipe
+     */
+    public function suitabilities()
+    {
+        return $this->hasMany(\App\Models\RecipeSuitability::class, 'recipe_id');
     }
 
     /**

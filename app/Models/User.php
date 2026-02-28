@@ -7,6 +7,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Support\Facades\Log;
+use App\Models\Recipe;
 
 class User extends Authenticatable
 {
@@ -95,7 +96,7 @@ class User extends Authenticatable
     public function bookmarks()
     {
         // Parameter ke-2 adalah nama tabel pivot ('bookmarks')
-        return $this->belongsToMany(Recipe::class, 'bookmarks')
+        return $this->belongsToMany(Recipe::class, 'bookmarks', 'user_id', 'recipe_id')
                     ->withTimestamps();
     }
 }

@@ -25,9 +25,9 @@ class RecipeController extends Controller
         // Initialize dengan fallback aman (tidak akan crash jika config null)
         try {
             $this->classificationService
-                ->setIngredientMapping(config('recipe_mappings.ingredients', null))
-                ->setIngredientAliases(config('recipe_mappings.aliases', null))
-                ->setHealthRestrictions(config('recipe_mappings.health_restrictions', null));
+                ->setIngredientMapping(config('recipe_mapping.ingredients', null))
+                ->setIngredientAliases(config('recipe_mapping.aliases', null))
+                ->setHealthRestrictions(config('recipe_mapping.health_restrictions', null));
             
             // Log status initialization
             if (!$this->classificationService->isMappingLoaded()) {
@@ -73,6 +73,7 @@ class RecipeController extends Controller
 
     public function store(StoreRecipeRequest $request)
     {
+        $user = $request->user();
         try {
             $result = DB::transaction(function () use ($request) {
                 // 1. Handle Upload Gambar (Max 1MB)
@@ -207,6 +208,7 @@ class RecipeController extends Controller
         ])->findOrFail($id);
         
         $isFavorited = false;
+        $userData = null;
         if ($request->user()) {
             $userData = [
                 'is_favorited' => $recipe->favoritedBy()->where('user_id', $request->user()->id)->exists(),
