@@ -22,7 +22,7 @@ class RecipeSuitability extends Model
         return $this->belongsTo(Recipe::class);
     }
 
-    public function healthCondition(): BelongsTo
+    public function healthCondition(): BelongsTo  // ← Perhatikan capital 'C'
     {
         return $this->belongsTo(HealthCondition::class);
     }

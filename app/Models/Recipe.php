@@ -4,6 +4,10 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\RecipeSuitability;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Models\User;
+
 
 class Recipe extends Model
 {
@@ -73,16 +77,23 @@ class Recipe extends Model
                     ->withTimestamps();
     }
 
-    /**
-     * Get the additional ingredients for this recipe
+     /**
+     * Get the health condition suitabilities for this recipe
      */
-    public function additionalIngredients()
+    public function suitabilities()
     {
-        return $this->belongsToMany(Ingredient::class, 'recipe_ingredients')
-                    ->withPivot('jumlah')
-                    ->wherePivot('is_main', false)
-                    ->withTimestamps();
+        return $this->hasMany(\App\Models\RecipeSuitability::class, 'recipe_id');
     }
+
+    public function healthConditions(): BelongsToMany
+    {
+    return $this->belongsToMany(
+        HealthCondition::class, 
+        'recipe_suitability', 
+        'recipe_id', 
+        'health_condition_id'
+    )->using(RecipeSuitability::class); // optional: jika butuh akses ke pivot
+}
 
     /**
      * Get the recipe ingredients relationship
@@ -91,14 +102,6 @@ class Recipe extends Model
     public function recipeIngredients()
     {
         return $this->hasMany(RecipeIngredient::class, 'recipe_id');
-    }
-
-    /**
-     * Get the health condition suitabilities for this recipe
-     */
-    public function recipeSuitability()
-    {
-        return $this->hasMany(RecipeSuitability::class, 'recipe_id');
     }
 
     /**

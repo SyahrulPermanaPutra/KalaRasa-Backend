@@ -55,7 +55,7 @@ class BookmarkController extends Controller
             'recipe_id' => 'required|exists:recipes,id',
         ]);
 
-        $user = Auth::user();
+        $user = $request->get('auth_user');
         $recipeId = $request->recipe_id;
 
         // Cek apakah sudah di-bookmark
@@ -80,9 +80,9 @@ class BookmarkController extends Controller
     /**
      * Hapus resep dari bookmark
      */
-    public function destroy($recipeId)
+    public function destroy(Request $request, $recipeId)
     {
-        $user = Auth::user();
+        $user = $request->get('auth_user');
 
         // Cek apakah resep ada di bookmark
         $isBookmarked = $user->bookmarks()->where('recipe_id', $recipeId)->exists();

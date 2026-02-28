@@ -71,21 +71,6 @@ class AuthController extends Controller
             ], 401);
         }
         
-        // HAPUS BAGIAN INI - Tidak perlu menyimpan token
-        /*
-        // 3. Simpan atau update user di database lokal
-        $user = User::updateOrCreate(
-            ['sso_id' => $data['user']['id']],
-            [
-                'name' => $data['user']['name'],
-                'email' => $data['user']['email'],
-                'phone' => $data['user']['phone'] ?? null,
-                'role' => $data['user']['role'] ?? 'user',
-                'api_token' => $data['access_token'], // HAPUS INI
-            ]
-        );
-        */
-        
         // GANTI DENGAN INI - Hanya simpan data user tanpa token
         $user = User::updateOrCreate(
             ['sso_id' => $data['user']['id']],
@@ -233,16 +218,6 @@ class AuthController extends Controller
             'gender' => $request->gender,
             'birthdate' => $request->birthdate,
         ]);
-
-        if ($request->hasFile('avatar')) {
-            if ($user->avatar) {
-                Storage::disk('public')->delete($user->avatar);
-            }
-
-            $path = $request->file('avatar')->store('avatars', 'public');
-            $user->avatar = $path;
-            $user->save();
-        }
 
         return response()->json([
             'success' => true,

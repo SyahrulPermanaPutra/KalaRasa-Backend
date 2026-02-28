@@ -6,6 +6,8 @@ use App\Http\Requests\StoreRecipeRequest;
 use App\Models\Recipe;
 use App\Models\ShoppingList;
 use App\Models\ShoppingListItem;
+use App\Models\RecipeSuitability; 
+use App\Models\HealthCondition; 
 use App\Services\RecipeClassificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -25,9 +27,9 @@ class RecipeController extends Controller
         // Initialize dengan fallback aman (tidak akan crash jika config null)
         try {
             $this->classificationService
-                ->setIngredientMapping(config('recipe_mappings.ingredients', null))
-                ->setIngredientAliases(config('recipe_mappings.aliases', null))
-                ->setHealthRestrictions(config('recipe_mappings.health_restrictions', null));
+                ->setIngredientMapping(config('recipe_mappings.ingredients', []))
+                ->setIngredientAliases(config('recipe_mappings.aliases', []))
+                ->setHealthRestrictions(config('recipe_mappings.health_restrictions', []));
             
             // Log status initialization
             if (!$this->classificationService->isMappingLoaded()) {
@@ -74,7 +76,10 @@ class RecipeController extends Controller
     public function store(StoreRecipeRequest $request)
     {
         try {
-            $result = DB::transaction(function () use ($request) {
+            // Inisialisasi variable untuk digunakan di luar closure
+            $fallbackIngredients = [];
+            
+            $result = DB::transaction(function () use ($request, &$fallbackIngredients) {
                 // 1. Handle Upload Gambar (Max 1MB)
                 $gambarPath = null;
                 if ($request->hasFile('gambar')) {
@@ -107,7 +112,6 @@ class RecipeController extends Controller
 
                 // 3. Proses Bahan-bahan dari Input User
                 $ingredientIds = [];
-                $fallbackIngredients = [];
 
                 foreach ($request->bahan_bahan as $bahan) {
                     // Normalisasi nama bahan
@@ -197,32 +201,36 @@ class RecipeController extends Controller
         }
     }
 
-
     public function show(Request $request, $id)
-    {
-        $recipe = Recipe::approved()->with([
-            'creator:id,name,email',
-            'ingredients:id,nama,kategori,sub_kategori',
-            'suitabilities.healthCondition'
-        ])->findOrFail($id);
-        
-        $isFavorited = false;
-        if ($request->user()) {
-            $userData = [
-                'is_favorited' => $recipe->favoritedBy()->where('user_id', $request->user()->id)->exists(),
-                'my_rating' => $recipe->userRating($request->user()->id),
-                'has_rated' => $recipe->isRatedByUser($request->user()->id)
-            ];
-        }
-        
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'recipe' => $recipe,
-                'user_data' => $userData  
-            ]
-        ]);
+{
+    $recipe = Recipe::approved()->with([
+        'creator:id,name,email',
+        'ingredients:id,nama,kategori,sub_kategori',
+        'suitabilities.healthCondition', // ✅ Perbaiki: healthCondition (camelCase)
+    ])->findOrFail($id);
+    
+    $userData = [
+        'is_favorited' => false,
+        'my_rating' => null,
+        'has_rated' => false
+    ];
+    
+    if ($request->user()) {
+        $userData = [
+            'is_favorited' => $recipe->favoritedBy()->where('user_id', $request->user()->id)->exists(),
+            'my_rating' => $recipe->userRating($request->user()->id),
+            'has_rated' => $recipe->isRatedByUser($request->user()->id)
+        ];
     }
+    
+    return response()->json([
+        'success' => true,
+        'data' => [
+            'recipe' => $recipe,
+            'user_data' => $userData  
+        ]
+    ]);
+}
 
     public function addToShoppingList(Request $request, $id)
     {
@@ -234,9 +242,9 @@ class RecipeController extends Controller
             [
                 'user_id' => $user->id,
                 'recipe_id' => $recipe->id,
-                'nama_list' => 'Belanja: ' . $recipe->nama
             ],
             [
+                'nama_list' => 'Belanja: ' . $recipe->nama,
                 'status' => 'pending',
                 'shopping_date' => now()->toDateString()
             ]
@@ -256,6 +264,7 @@ class RecipeController extends Controller
                 $addedItems[] = $shoppingItem;
             }
         } else {
+            // Fallback jika tidak ada relasi ingredients
             $bahanMakanan = $recipe->bahan_makanan ?? [];
             foreach ($bahanMakanan as $bahan) {
                 if (is_array($bahan)) {
