@@ -13,6 +13,11 @@ use App\Models\Ingredient;
 use App\Models\HealthCondition;
 use App\Models\UserQuery;
 use App\Models\MatchedRecipe;
+use App\Models\NlpFeedback;
+use App\Models\Role;
+use Illuminate\Support\Facades\DB;
+use App\Models\CbrWeightSnapshot;
+
 
 class ChatbotController extends Controller
 {
@@ -60,6 +65,7 @@ class ChatbotController extends Controller
 
             // ── 2. Simpan ke user_queries ─────────────────────────────────
             $userQuery = $this->saveUserQuery($user->id, $message, $nlp);
+            Cache::put("chatbot_last_query_text:{$sessionId}", $message, now()->addMinutes($this->sessionTtl));
 
             $convState = $nlp['conversation_state'] ?? 'collecting';
             $action    = $nlp['action'] ?? 'search_recipes';
@@ -195,7 +201,7 @@ class ChatbotController extends Controller
     return response()->json([
         'success'  => true,
         'type'     => 'recipe_results',
-        'search_type' => 'cbr_match',  // ✨ Info tipe pencarian
+        'search_type' => 'cbr_match', 
         'recipes'  => $recipes,
         'total'    => count($recipes),
         'cbr_meta' => [ /* ... */ ],
@@ -637,6 +643,248 @@ class ChatbotController extends Controller
         $recipes = $query->limit(8)->get();
 
         return $recipes->map(fn ($r) => $this->formatRecipe($r))->toArray();
+    }
+
+
+    // =========================================================================
+// Feedback Methods
+// =========================================================================
+
+/**
+ * Submit feedback untuk resep yang direkomendasikan
+ * Route: POST /api/chatbot/feedback
+ */
+public function submitFeedback(Request $request): \Illuminate\Http\JsonResponse
+{
+    $request->validate([
+        'session_id'    => 'required|string|max:100',
+        'recipe_id'     => 'required|integer|exists:recipes,id',
+        'rating'        => 'required|integer|in:1,-1',
+        'feedback_type' => 'nullable|string|in:explicit,implicit',
+        'rank_shown'    => 'nullable|integer|min:1|max:10',
+        'query_hash'    => 'nullable|string|max:32',
+        'matched_score' => 'nullable|numeric|min:0|max:100',
+    ]);
+
+    $user = $request->auth_user ?? $request->user();
+    if (!$user) {
+        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+    }
+
+    // 1. Simpan feedback ke DB
+    $feedback = NlpFeedback::create([
+        'user_id'       => $user->id,
+        'session_id'    => $request->input('session_id'),
+        'recipe_id'     => $request->input('recipe_id'),
+        'rating'        => $request->input('rating'),
+        'feedback_type' => $request->input('feedback_type', 'explicit'),
+        'rank_shown'    => $request->input('rank_shown', 1),
+        'query_hash'    => $request->input('query_hash'),
+        'matched_score' => $request->input('matched_score'),
+        // Ambil query_text dari session cache
+        'query_text'    => $this->getLastQueryText($request->input('session_id')),
+        // Link ke user_query terkait jika ada
+        'user_query_id' => $this->getLastUserQueryId($user->id),
+    ]);
+
+    // 2. Update matched_recipes (tandai sudah diberi feedback)
+    MatchedRecipe::where('recipe_id', $request->input('recipe_id'))
+        ->whereHas('userQuery', fn($q) => $q->where('user_id', $user->id))
+        ->latest()
+        ->limit(1)
+        ->update([
+            'feedback_given'  => true,
+            'feedback_rating' => $request->input('rating'),
+        ]);
+
+    // 3. Kirim ke Flask untuk update CBR case weight
+    $nlpResult = $this->callNlpFeedback(
+        recipeId:     $request->input('recipe_id'),
+        rating:       $request->input('rating'),
+        feedbackType: $request->input('feedback_type', 'explicit'),
+        queryHash:    $request->input('query_hash'),
+    );
+
+    return response()->json([
+        'success'    => true,
+        'feedback_id'=> $feedback->id,
+        'nlp_update' => $nlpResult,
+        'message'    => $request->input('rating') === 1
+            ? 'Terima kasih atas feedback positifnya! 👍'
+            : 'Terima kasih, kami akan terus meningkatkan rekomendasi. 🙏',
+    ]);
+}
+
+/**
+ * Export feedback untuk grid search (admin only)
+ * Route: GET /api/admin/feedback/export
+ */
+public function exportFeedback(Request $request): \Illuminate\Http\JsonResponse
+{
+    // $this->authorize('admin'); // Uncomment jika menggunakan authorization
+    $limit = min((int) $request->input('limit', 1000), 5000);
+
+    $feedback = DB::table('feedback_export_for_grid_search')
+        ->latest('created_at')
+        ->limit($limit)
+        ->get()
+        ->map(function ($row) {
+            return [
+                'query_text' => $row->query_text,
+                'entities'   => json_decode($row->entities_json ?? '{}', true),
+                'recipe_id'  => (int) $row->recipe_id,
+                'rating'     => (int) $row->rating,
+                'rank_shown' => (int) $row->rank_shown,
+                'query_hash' => $row->query_hash,
+            ];
+        })
+        ->toArray();
+
+    return response()->json($feedback);
+}
+
+/**
+ * Reload kamus NLP (informal_map.json, synonyms/*.json) tanpa restart service.
+ * Dipanggil setelah tim konten update file JSON kamus.
+ * 
+ * Route: POST /api/chatbot/reload-dictionaries
+ */
+public function reloadDictionaries(Request $request)
+{
+    $user = $request->auth_user ?? $request->user();
+    
+    if (!$user) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Unauthorized'
+        ], 401);
+    }
+
+    // Cek apakah user memiliki role admin - cara 1: cek nama role
+    $adminRoleId = Role::where('name', 'admin')->value('id');
+    
+    if ($user->role_id !== $adminRoleId) {
+        Log::warning('Non-admin user attempted to reload dictionaries', [
+            'user_id' => $user->id,
+            'user_email' => $user->email,
+            'user_role_id' => $user->role_id
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Forbidden: Hanya admin yang dapat mengakses fitur ini'
+        ], 403);
+    }
+
+    try {
+        $response = Http::withHeaders([
+            'X-Internal-Key' => env('NLP_SERVICE_KEY'),
+            'Content-Type' => 'application/json',
+        ])
+        ->timeout(30)
+        ->post("{$this->nlpApiUrl}/api/reload-dicts", []);
+
+        if ($response->successful()) {
+            $data = $response->json();
+            
+            Log::info('NLP Dictionaries reloaded by admin', [
+                'admin_id' => $user->id,
+                'admin_email' => $user->email,
+                'stats' => $data['stats'] ?? null
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => $data['message'] ?? 'Dictionaries reloaded successfully',
+                'stats' => $data['stats'] ?? null
+            ]);
+        }
+
+        $errorBody = $response->json();
+        $errorMessage = $errorBody['error'] ?? 'Unknown error from NLP service';
+
+        Log::error('Failed to reload NLP dictionaries', [
+            'status' => $response->status(),
+            'error' => $errorMessage,
+            'admin_id' => $user->id
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Gagal me-reload kamus NLP',
+            'error' => $errorMessage
+        ], $response->status());
+
+    } catch (\Exception $e) {
+        Log::error('Exception when reloading NLP dictionaries', [
+            'admin_id' => $user->id,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Terjadi kesalahan saat menghubungi NLP service',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
+
+    // =========================================================================
+    // Feedback Helpers
+    // =========================================================================
+
+    /**
+     * Kirim feedback ke NLP service untuk update CBR case weight
+     */
+    private function callNlpFeedback(int $recipeId, int $rating, string $feedbackType, ?string $queryHash): array
+    {
+        try {
+            $response = Http::withHeaders([
+                'X-Internal-Key' => env('NLP_SERVICE_KEY'),
+                'Content-Type'   => 'application/json',
+            ])
+            ->timeout(10)
+            ->post("{$this->nlpApiUrl}/api/feedback", [
+                'recipe_id'     => $recipeId,
+                'rating'        => $rating,
+                'feedback_type' => $feedbackType,
+                'query_hash'    => $queryHash,
+            ]);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::warning('NLP Feedback API error', [
+                'status' => $response->status(),
+                'body'   => $response->body(),
+            ]);
+            
+            return ['success' => false, 'error' => 'NLP service returned ' . $response->status()];
+            
+        } catch (\Exception $e) {
+            Log::warning('NLP Feedback call failed: ' . $e->getMessage());
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Get last query text from cache
+     */
+    private function getLastQueryText(string $sessionId): ?string
+    {
+        return Cache::get("chatbot_last_query_text:{$sessionId}");
+    }
+
+    /**
+     * Get last user query ID
+     */
+    private function getLastUserQueryId(int $userId): ?int
+    {
+        return UserQuery::where('user_id', $userId)
+            ->latest()
+            ->value('id');
     }
 
     // =========================================================================

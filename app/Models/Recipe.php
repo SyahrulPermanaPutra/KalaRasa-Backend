@@ -7,6 +7,10 @@ use Illuminate\Database\Eloquent\Model;
 use App\Models\RecipeSuitability;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use App\Models\User;
+use App\Models\HealthCondition;
+use App\Models\RecipeIngredient;
+use App\Models\ShoppingList;
+use App\Models\RecipeRating;
 
 
 class Recipe extends Model

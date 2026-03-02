@@ -49,6 +49,7 @@ Route::middleware(['auth.sso'])->group(function () {
         Route::post('search', [App\Http\Controllers\Api\ChatbotController::class, 'directSearch']);
         Route::get('history', [App\Http\Controllers\Api\ChatbotController::class, 'getHistory']);
         Route::post('reset', [App\Http\Controllers\Api\ChatbotController::class, 'resetSession']);
+        Route::post('feedback', [ChatbotController::class, 'submitFeedback']);
     });
 
     // Recipe Routes (User)
@@ -135,6 +136,11 @@ Route::middleware(['auth.sso'])->group(function () {
 
     // Admin Routes
     Route::prefix('admin')->middleware('auth.sso')->group(function () {        
+         
+        // Feedback chatbot
+        Route::post('/chatbot/reload-dictionaries', [ChatbotController::class, 'reloadDictionaries']);
+        Route::get('feedback/export', [ChatbotController::class, 'exportFeedback']);
+        
         // User Management
         Route::prefix('user')->group(function () {
             Route::get('/', [AdminUserController::class, 'index']);               

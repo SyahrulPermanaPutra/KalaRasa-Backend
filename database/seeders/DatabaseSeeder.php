@@ -41,8 +41,6 @@ class DatabaseSeeder extends Seeder
             ShoppingListSeeder::class,
             ShoppingListItemSeeder::class,
             ExpenseSeeder::class,
-            UserQuerySeeder::class,
-            MatchedRecipeSeeder::class,
         ]);
     }
 }
