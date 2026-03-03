@@ -7,7 +7,7 @@ use App\Models\User;
 use App\Models\Role; 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class AuthController extends Controller
 {
@@ -156,7 +156,7 @@ class AuthController extends Controller
         ]);
 
     } catch (\Exception $e) {
-        \Log::error('Login error: ' . $e->getMessage());
+        Log::error('Login error: ' . $e->getMessage());
         return response()->json([
             'success' => false,
             'message' => 'Gagal terhubung ke server SSO'
@@ -175,7 +175,7 @@ class AuthController extends Controller
         ])->post(rtrim($ssoBase, '/') . '/api/logout');
         
     } catch (\Exception $e) {
-        \Log::warning('Logout SSO error: ' . $e->getMessage());
+        Log::warning('Logout SSO error: ' . $e->getMessage());
         // Abaikan error, yang penting client sudah hapus token
     }
 
@@ -219,7 +219,7 @@ class AuthController extends Controller
             ]);
             
         } catch (\Exception $e) {
-            \Log::error('Refresh token error: ' . $e->getMessage());
+            Log::error('Refresh token error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to refresh token'
@@ -257,36 +257,89 @@ class AuthController extends Controller
 
     public function updateProfile(Request $request)
 {
-    $user = $request->auth_user ?? $request->user();
+    try {
+        // =========================
+        // 1️⃣ GET AUTHENTICATED USER (dari middleware)
+        // =========================
+        $user = $request->auth_user;
 
-    if (!$user) {
+        // =========================
+        // 2️⃣ VALIDASI INPUT
+        // =========================
+        $validated = $request->validate([
+            'name'      => 'required|string|max:255',
+            'phone'     => 'nullable|string|max:20',
+            'address'   => 'nullable|string|max:255',
+            'gender'    => 'nullable|in:pria,wanita',
+            'birthdate' => 'nullable|date',
+        ]);
+
+        // =========================
+        // 3️⃣ UPDATE KE SSO
+        // =========================
+        $token = $request->bearerToken();
+        $ssoBase = rtrim(env('SSO_URL'), '/');
+
+        $updateSSO = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $token,
+            'Accept'        => 'application/json'
+        ])->post($ssoBase . '/api/update-profile', $validated); // ✅ Ganti PUT → POST
+
+        Log::info('SSO Update Profile', [
+            'status' => $updateSSO->status(),
+            'body'   => $updateSSO->body()
+        ]);
+
+        if (!$updateSSO->successful()) {
+            $errorBody = $updateSSO->json();
+            
+            return response()->json([
+                'success' => false,
+                'message' => $errorBody['message'] ?? 'Gagal update ke SSO',
+                'errors'  => $errorBody['errors'] ?? null,
+            ], $updateSSO->status());
+        }
+
+        // =========================
+        // 4️⃣ UPDATE DATABASE LOKAL
+        // =========================
+        // Hanya update field yang dikirim
+        $updateData = array_filter($validated, function ($key) use ($request) {
+            return $request->has($key);
+        }, ARRAY_FILTER_USE_KEY);
+
+        if (!empty($updateData)) {
+            $user->update($updateData);
+        }
+
+        // =========================
+        // 5️⃣ RETURN RESPONSE
+        // =========================
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile berhasil diupdate',
+            'data'    => $this->formatUser($user->fresh())
+        ], 200);
+
+    } catch (\Illuminate\Validation\ValidationException $e) {
         return response()->json([
             'success' => false,
-            'message' => 'Unauthorized'
-        ], 401);
+            'message' => 'Validation error',
+            'errors'  => $e->errors()
+        ], 422);
+
+    } catch (\Exception $e) {
+        Log::error('Update Profile Error', [
+            'message' => $e->getMessage(),
+            'trace'   => $e->getTraceAsString()
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Terjadi kesalahan sistem',
+            'error'   => config('app.debug') ? $e->getMessage() : null
+        ], 500);
     }
-
-    $validated = $request->validate([
-        'name'      => 'required|string|max:255',
-        'phone'     => 'nullable|string|max:20',
-        'gender'    => 'nullable|in:Pria,Wanita',
-        'birthdate' => 'nullable|date',
-    ]);
-
-    // Hanya update field yang dikirim (hindari null overwrite)
-    $updateData = array_filter($validated, function ($key) use ($request) {
-        return $request->has($key);
-    }, ARRAY_FILTER_USE_KEY);
-
-    if (!empty($updateData)) {
-        $user->update($updateData);
-    }
-
-    return response()->json([
-        'success' => true,
-        'message' => 'Profile berhasil diupdate',
-        'data' => $this->formatUser($user)
-    ]);
 }
 
     private function formatUser($user)
