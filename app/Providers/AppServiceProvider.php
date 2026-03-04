@@ -20,8 +20,8 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         // Set default user ke user id 2 untuk kebutuhan auth
-        \Illuminate\Support\Facades\Auth::viaRequest('default', function ($request) {
-            return \App\Models\User::find(2);
-        });
+        // \Illuminate\Support\Facades\Auth::viaRequest('default', function ($request) {
+        //     return \App\Models\User::find(2);
+        // });
     }
 }

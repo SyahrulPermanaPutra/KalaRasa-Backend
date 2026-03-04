@@ -32,16 +32,20 @@ Route::prefix('chatbot')->group(function () {
 
 Route::post('/login', [AuthController::class, 'login'])->name('login');
 Route::post('/refresh', [AuthController::class, 'refresh']);
+// Route::get('/profile/password',AuthController::class, 'showResetPasswordForm'])->name('profile.password');
+
 
 // Protected Routes (User & Admin)
 Route::middleware(['auth.sso'])->group(function () {
     
     // Auth Routes
-    Route::post('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/profile', [AuthController::class, 'profile']);
     Route::put('/profile', [AuthController::class, 'updateProfile']);
-    Route::patch('/profile', [AuthController::class, 'updateProfile']);
+    Route::put('/profile/password',[AuthController::class, 'resetPassword']);
+    // Route::get('/profile/password',[AuthController::class, 'showResetPasswordForm']);
+    // Route::post('/me', [AuthController::class, 'me']);
+    // Route::patch('/profile', [AuthController::class, 'updateProfile']);
 
     // Chatbot routes
     Route::prefix('chatbot')->group(function () {

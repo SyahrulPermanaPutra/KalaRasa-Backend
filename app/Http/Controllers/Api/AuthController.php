@@ -8,6 +8,7 @@ use App\Models\Role;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Client\ConnectionException;
 
 class AuthController extends Controller
 {
@@ -55,7 +56,7 @@ class AuthController extends Controller
         $data = $response->json();
 
         if (!isset($data['access_token'])) {
-            \Log::error('Access token tidak ditemukan', ['response' => $data]);
+            Log::error('Access token tidak ditemukan', ['response' => $data]);
             return response()->json([
                 'success' => false,
                 'message' => 'Token tidak ditemukan dari SSO',
@@ -256,91 +257,91 @@ class AuthController extends Controller
     }
 
     public function updateProfile(Request $request)
-{
-    try {
-        // =========================
-        // 1️⃣ GET AUTHENTICATED USER (dari middleware)
-        // =========================
-        $user = $request->auth_user;
+    {
+        try {
+            // =========================
+            // 1️⃣ GET AUTHENTICATED USER (dari middleware)
+            // =========================
+            $user = $request->auth_user;
 
-        // =========================
-        // 2️⃣ VALIDASI INPUT
-        // =========================
-        $validated = $request->validate([
-            'name'      => 'required|string|max:255',
-            'phone'     => 'nullable|string|max:20',
-            'address'   => 'nullable|string|max:255',
-            'gender'    => 'nullable|in:pria,wanita',
-            'birthdate' => 'nullable|date',
-        ]);
+            // =========================
+            // 2️⃣ VALIDASI INPUT
+            // =========================
+            $validated = $request->validate([
+                'name'      => 'required|string|max:255',
+                'phone'     => 'nullable|string|max:20',
+                'address'   => 'nullable|string|max:255',
+                'gender'    => 'nullable|in:pria,wanita',
+                'birthdate' => 'nullable|date',
+            ]);
 
-        // =========================
-        // 3️⃣ UPDATE KE SSO
-        // =========================
-        $token = $request->bearerToken();
-        $ssoBase = rtrim(env('SSO_URL'), '/');
+            // =========================
+            // 3️⃣ UPDATE KE SSO
+            // =========================
+            $token = $request->bearerToken();
+            $ssoBase = rtrim(env('SSO_URL'), '/');
 
-        $updateSSO = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $token,
-            'Accept'        => 'application/json'
-        ])->post($ssoBase . '/api/update-profile', $validated); // ✅ Ganti PUT → POST
+            $updateSSO = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $token,
+                'Accept'        => 'application/json'
+            ])->post($ssoBase . '/api/update-profile', $validated); // ✅ Ganti PUT → POST
 
-        Log::info('SSO Update Profile', [
-            'status' => $updateSSO->status(),
-            'body'   => $updateSSO->body()
-        ]);
+            Log::info('SSO Update Profile', [
+                'status' => $updateSSO->status(),
+                'body'   => $updateSSO->body()
+            ]);
 
-        if (!$updateSSO->successful()) {
-            $errorBody = $updateSSO->json();
-            
+            if (!$updateSSO->successful()) {
+                $errorBody = $updateSSO->json();
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => $errorBody['message'] ?? 'Gagal update ke SSO',
+                    'errors'  => $errorBody['errors'] ?? null,
+                ], $updateSSO->status());
+            }
+
+            // =========================
+            // 4️⃣ UPDATE DATABASE LOKAL
+            // =========================
+            // Hanya update field yang dikirim
+            $updateData = array_filter($validated, function ($key) use ($request) {
+                return $request->has($key);
+            }, ARRAY_FILTER_USE_KEY);
+
+            if (!empty($updateData)) {
+                $user->update($updateData);
+            }
+
+            // =========================
+            // 5️⃣ RETURN RESPONSE
+            // =========================
+            return response()->json([
+                'success' => true,
+                'message' => 'Profile berhasil diupdate',
+                'data'    => $this->formatUser($user->fresh())
+            ], 200);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
-                'message' => $errorBody['message'] ?? 'Gagal update ke SSO',
-                'errors'  => $errorBody['errors'] ?? null,
-            ], $updateSSO->status());
+                'message' => 'Validation error',
+                'errors'  => $e->errors()
+            ], 422);
+
+        } catch (\Exception $e) {
+            Log::error('Update Profile Error', [
+                'message' => $e->getMessage(),
+                'trace'   => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan sistem',
+                'error'   => config('app.debug') ? $e->getMessage() : null
+            ], 500);
         }
-
-        // =========================
-        // 4️⃣ UPDATE DATABASE LOKAL
-        // =========================
-        // Hanya update field yang dikirim
-        $updateData = array_filter($validated, function ($key) use ($request) {
-            return $request->has($key);
-        }, ARRAY_FILTER_USE_KEY);
-
-        if (!empty($updateData)) {
-            $user->update($updateData);
-        }
-
-        // =========================
-        // 5️⃣ RETURN RESPONSE
-        // =========================
-        return response()->json([
-            'success' => true,
-            'message' => 'Profile berhasil diupdate',
-            'data'    => $this->formatUser($user->fresh())
-        ], 200);
-
-    } catch (\Illuminate\Validation\ValidationException $e) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Validation error',
-            'errors'  => $e->errors()
-        ], 422);
-
-    } catch (\Exception $e) {
-        Log::error('Update Profile Error', [
-            'message' => $e->getMessage(),
-            'trace'   => $e->getTraceAsString()
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Terjadi kesalahan sistem',
-            'error'   => config('app.debug') ? $e->getMessage() : null
-        ], 500);
     }
-}
 
     private function formatUser($user)
     {
@@ -356,5 +357,88 @@ class AuthController extends Controller
             'points' => $user->points ?? 0,
             'created_at' => $user->created_at,
         ];
+    }
+
+    public function resetPassword(Request $request)
+    {
+        try {
+            // =========================
+            // 1️⃣ GET AUTHENTICATED USER (dari middleware)
+            // =========================
+            $user = $request->auth_user;
+
+            // =========================
+            // 2️⃣ VALIDASI INPUT
+            // =========================
+            $validated = $request->validate([
+                'current_password' => 'required|string',
+                'new_password' => [
+                    'required', 
+                    'string', 
+                    'confirmed', 
+                    'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*[^a-zA-Z0-9]).{8,}$/'
+                ],
+            ], [
+                'new_password.regex' => 'Minimal 8 karakter, 1 huruf kecil, 1 huruf kapital, dan 1 simbol.',
+                'new_password.confirmed' => 'Konfirmasi password tidak cocok.',
+            ]);
+
+            // =========================
+            // 3️⃣ RESET PASSWORD KE SSO
+            // =========================
+            $token = $request->bearerToken();
+            $ssoBase = rtrim(env('SSO_URL'), '/');
+
+            $resetSSO = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $token,
+                'Accept'        => 'application/json'
+            ])->post($ssoBase . '/api/reset-password', [
+                'current_password' => $request->current_password,
+                'new_password' => $request->new_password,
+                'new_password_confirmation' => $request->new_password_confirmation,
+            ]);
+
+            Log::info('SSO Reset Password', [
+                'status' => $resetSSO->status(),
+                'body'   => $resetSSO->body()
+            ]);
+
+            if (!$resetSSO->successful()) {
+                $errorBody = $resetSSO->json();
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => $errorBody['message'] ?? 'Gagal mengubah password',
+                    'errors'  => $errorBody['errors'] ?? null,
+                ], $resetSSO->status());
+            }
+
+            // =========================
+            // 4️⃣ RETURN SUCCESS RESPONSE
+            // =========================
+            return response()->json([
+                'success' => true,
+                'message' => 'Password berhasil diubah'
+            ], 200);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation error',
+                'errors'  => $e->errors()
+            ], 422);
+
+        } catch (\Exception $e) {
+            Log::error('Reset Password Error', [
+                'message' => $e->getMessage(),
+                'trace'   => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Terjadi kesalahan sistem',
+                'error'   => config('app.debug') ? $e->getMessage() : null
+            ], 500);
+        }
     }
 }
