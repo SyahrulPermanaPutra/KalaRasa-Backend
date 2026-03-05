@@ -128,6 +128,14 @@ class Recipe extends Model
         return $this->belongsToMany(User::class, 'bookmarks')
                     ->withTimestamps();
     }
+
+    /**
+ * Get the recipe suitability records for the recipe.
+ */
+public function recipeSuitability()
+{
+    return $this->hasMany(RecipeSuitability::class, 'recipe_id');
+}
     
     /**
      * Scope for approved recipes

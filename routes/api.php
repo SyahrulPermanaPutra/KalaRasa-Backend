@@ -7,12 +7,14 @@ use App\Http\Controllers\Api\ShoppingListController;
 use App\Http\Controllers\Api\Admin\AdminDashboardController;
 use App\Http\Controllers\Api\Admin\AdminRecipeController;
 use App\Http\Controllers\Api\Admin\AdminUserController;
+use App\Http\Controllers\Api\ExportController;
 use App\Http\Controllers\Api\ExpenseController;
 use App\Http\Controllers\Api\RecipeRatingController;
 use App\Http\Controllers\Api\BookmarkController;
 use App\Http\Controllers\Api\RecipeController;
 use App\Http\Controllers\Api\ChatbotController;
 use App\Http\Controllers\Api\ShoppingListItemController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -49,11 +51,13 @@ Route::middleware(['auth.sso'])->group(function () {
 
     // Chatbot routes
     Route::prefix('chatbot')->group(function () {
-        Route::post('message', [App\Http\Controllers\Api\ChatbotController::class, 'processMessage']);
-        Route::post('search', [App\Http\Controllers\Api\ChatbotController::class, 'directSearch']);
-        Route::get('history', [App\Http\Controllers\Api\ChatbotController::class, 'getHistory']);
-        Route::post('reset', [App\Http\Controllers\Api\ChatbotController::class, 'resetSession']);
-        Route::post('feedback', [ChatbotController::class, 'submitFeedback']);
+        Route::post('message', [ChatbotController::class, 'processMessage']);
+        Route::post('search', [ChatbotController::class, 'directSearch']);
+        Route::get('history', [ChatbotController::class, 'getHistory']);
+        Route::post('reset', [ChatbotController::class, 'resetSession']);
+        
+        // Feedback route
+        Route::post('feedback', [FeedbackHandler::class, 'submitFeedback']);
     });
 
     // Recipe Routes (User)
@@ -142,8 +146,10 @@ Route::middleware(['auth.sso'])->group(function () {
     Route::prefix('admin')->middleware('auth.sso')->group(function () {        
          
         // Feedback chatbot
-        Route::post('/chatbot/reload-dictionaries', [ChatbotController::class, 'reloadDictionaries']);
-        Route::get('feedback/export', [ChatbotController::class, 'exportFeedback']);
+        Route::post('/reload-dictionaries', [ExportController::class, 'reloadDictionaries']);
+        Route::get('/cbr-index', [ExportController::class, 'exportCbrIndex']);
+        Route::get('/export/feedback', [ExportController::class, 'exportFeedback']);
+        Route::get('/sample-data', [ExportController::class, 'generateSampleData']);
         
         // User Management
         Route::prefix('user')->group(function () {

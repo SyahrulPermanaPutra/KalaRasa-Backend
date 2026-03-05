@@ -1,227 +1,161 @@
 <?php
+/**
+ * ChatbotController — Refactored
+ *
+ * Controller ini sengaja dibuat TIPIS (thin controller).
+ * Semua bisnis logic didelegasikan ke service classes:
+ *
+ *   NlpService      → komunikasi ke Flask NLP
+ *   CbrService      → CBR matching + recipe hydration
+ *   SessionService  → cache management session chatbot
+ *
+ * Alur per request:
+ *   [1] Validasi & ambil user
+ *   [2] NlpService::chat() → intent + entities dari Flask
+ *   [3] Log query ke DB
+ *   [4] CbrService atau DB matching sesuai conv_state
+ *   [5] Route ke action handler
+ *   [6] Bangun response via ResponseBuilder
+ */
 
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ProcessMessageRequest;
+use App\Http\Requests\DirectSearchRequest;
+use App\Services\NlpService;
+use App\Services\CbrService;
+use App\Services\SessionService;
+use App\Models\UserQuery;
+use App\Models\MatchedRecipe;
+use App\Models\HealthCondition;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
-use App\Models\Recipe;
-use App\Models\Ingredient;
-use App\Models\HealthCondition;
-use App\Models\UserQuery;
-use App\Models\MatchedRecipe;
-use App\Models\NlpFeedback;
-use App\Models\Role;
-use Illuminate\Support\Facades\DB;
-use App\Models\CbrWeightSnapshot;
-
 
 class ChatbotController extends Controller
 {
-    private string $nlpApiUrl;
-    private int    $nlpTimeout = 30;
-    private int $sessionTtl = 60;
+    private int $sessionTtl = 60; // menit
 
-    public function __construct()
+    public function __construct(
+        private readonly NlpService      $nlp,
+        private readonly CbrService      $cbr,
+        private readonly SessionService  $session,
+    ) {}
+
+    // =========================================================================
+    // ENDPOINT 1: Proses pesan percakapan
+    // =========================================================================
+
+    public function processMessage(ProcessMessageRequest $request): JsonResponse
     {
-        $this->nlpApiUrl = env('NLP_API_URL', 'http://127.0.0.1:5000');
-    }
-
-    /**
-     * Proses pesan dari user dengan integrasi CBR.
-     */
-    public function processMessage(Request $request)
-    {
-        $request->validate([
-            'message'    => 'required|string|max:500',
-            'session_id' => 'nullable|string|max:100',
-            'reset'      => 'boolean',
-        ]);
-
-        // Ambil user dari auth_user yang sudah di-set oleh middleware
-        $user = $request->auth_user ?? $request->user();
-        
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
-        }
-
-        $message    = trim($request->input('message'));
-        $sessionId  = $request->input('session_id') ?: $this->generateSessionId($user->id);
-        $reset      = (bool) $request->input('reset', false);
+        $user      = $request->auth_user ?? $request->user();
+        $message   = trim($request->input('message'));
+        $sessionId = $request->input('session_id') ?: $this->generateSessionId($user->id);
+        $reset     = (bool) $request->input('reset', false);
 
         try {
-            // ── 1. Kirim ke NLP Python ────────────────────────────────────
-            $nlp = $this->callNlpChat($sessionId, (string) $user->id, $message, $reset);
+            // [2] NLP Processing — satu-satunya call ke Flask untuk intent/entity
+            $nlp = $this->nlp->chat($sessionId, (string) $user->id, $message, $reset);
 
             if (! ($nlp['success'] ?? false)) {
-                return $this->errorResponse('Layanan NLP tidak tersedia', $nlp['error'] ?? 'Unknown');
+                Log::warning('NLP unavailable', ['session' => $sessionId, 'error' => $nlp['error'] ?? '?']);
+                return $this->errorResponse('Layanan NLP tidak tersedia saat ini.');
             }
 
-            // ── 2. Simpan ke user_queries ─────────────────────────────────
+            // [3] Log ke DB
             $userQuery = $this->saveUserQuery($user->id, $message, $nlp);
-            Cache::put("chatbot_last_query_text:{$sessionId}", $message, now()->addMinutes($this->sessionTtl));
+            $this->session->cacheLastQuery($sessionId, $message, $this->sessionTtl);
 
             $convState = $nlp['conversation_state'] ?? 'collecting';
             $action    = $nlp['action'] ?? 'search_recipes';
 
-            // ── 3. CBR Matching jika sudah siap ───────────────────────
-            $recipes = [];
-            $cbrMeta = null;
+            // [4] Recipe matching — gunakan SELALU context_entities dari Flask
+            // Lihat CATATAN PENTING di CbrService::matchOrFallback()
+            [$recipes, $cbrMeta] = $this->resolveRecipes($sessionId, $user->id, $message, $nlp, $convState);
 
-            if ($convState === 'ready') {
-                $entities  = $nlp['context_entities'] ?? $nlp['entities'] ?? [];
-                $cbrResult = $this->matchRecipesWithCBR(
-                    $sessionId,
-                    $user->id,
-                    $message,
-                    $entities,
-                    topK: 5
-                );
-
-                if (! empty($cbrResult['matched_recipes'])) {
-                    $recipes = $this->hydrateRecipes($cbrResult['matched_recipes']);
-                }
-                
-                $cbrMeta = $cbrResult ? [
-                    'from_cache'       => $cbrResult['from_cache'] ?? false,
-                    'total_candidates' => $cbrResult['total_candidates'] ?? 0,
-                    'query_hash'       => $cbrResult['query_hash'] ?? null,
-                ] : null;
-            } else {
-                // Fallback ke database matching biasa
-                $entities = $nlp['context_entities'] ?? $nlp['entities'] ?? [];
-                $recipes = $this->matchRecipesFromDB($entities);
-            }
-
-            // Simpan matched_recipes ke DB
+            // [5] Simpan matched recipes
             if ($userQuery && count($recipes) > 0) {
                 $this->saveMatchedRecipes($userQuery->id, $recipes);
             }
 
-            // ── 4. Handle action khusus ─────────────────
-            return match ($action) {
-                'show_restrictions'  => $this->handleShowRestrictions($nlp, $sessionId),
-                'show_detail'        => $this->handleShowDetail($nlp, $sessionId, $recipes),
-                'chitchat'           => $this->chatResponse(
-                    sessionId:    $sessionId,
-                    botMessage:   $nlp['bot_message'],
-                    quickReplies: $nlp['quick_replies'] ?? [],
-                    recipes:      [],
-                    nlp:          $nlp,
-                    type:         'chat',
-                    cbrMeta:      null,
-                ),
-                default => $this->buildSearchResponse($sessionId, $nlp, $recipes, $cbrMeta),
-            };
+            // [6] Route ke action handler
+            return $this->routeAction($action, $sessionId, $nlp, $recipes, $cbrMeta);
 
         } catch (\Exception $e) {
-            Log::error('ChatbotController Error', [
+            Log::error('ChatbotController::processMessage', [
                 'user_id' => $user->id,
                 'message' => $message,
                 'error'   => $e->getMessage(),
                 'trace'   => $e->getTraceAsString(),
             ]);
-
             return $this->errorResponse('Terjadi kesalahan sistem, silakan coba lagi.');
         }
     }
 
-    /**
-     * Direct CBR search tanpa melalui percakapan.
-     */
-    public function directSearch(Request $request)
-{
-    $request->validate([
-        'session_id'            => 'required|string',
-        'search_name'           => 'nullable|string|max:200',  // ✨ Baru
-        'ingredients'           => 'array',
-        'avoid_ingredients'     => 'array',
-        'health_conditions'     => 'array',
-        'time_constraint'       => 'nullable|integer|min:5|max:480',
-        'region'                => 'nullable|string|max:100',
-        'top_k'                 => 'integer|min:1|max:20',
-    ]);
+    // =========================================================================
+    // ENDPOINT 2: Direct CBR search (tanpa percakapan)
+    // =========================================================================
 
-    $user = $request->auth_user ?? $request->user();
-    if (!$user) {
-        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-    }
+    public function directSearch(DirectSearchRequest $request): JsonResponse
+    {
+        $user = $request->auth_user ?? $request->user();
 
-    // ✨ LOGIKA BARU: Jika ada search_name, prioritaskan pencarian nama
-    if (!empty($request->input('search_name'))) {
-        $recipes = $this->searchRecipesByName(
-            $request->input('search_name'),
-            $request->input('top_k', 10),
-            $request->input('health_conditions', []), // Optional filter tambahan
-            $request->input('time_constraint')
+        // Pencarian nama resep
+        if ($searchName = $request->input('search_name')) {
+            $recipes = $this->cbr->searchByName(
+                $searchName,
+                $request->input('top_k', 10),
+                $request->input('health_conditions', []),
+                $request->input('time_constraint'),
+            );
+            return response()->json([
+                'success'      => true,
+                'type'         => 'recipe_results',
+                'search_type'  => 'name_search',
+                'search_query' => $searchName,
+                'recipes'      => $recipes,
+                'total'        => count($recipes),
+            ]);
+        }
+
+        // CBR matching dengan entities langsung
+        $entities = [
+            'ingredients'       => [
+                'main'  => $request->input('ingredients', []),
+                'avoid' => $request->input('avoid_ingredients', []),
+            ],
+            'health_conditions' => $request->input('health_conditions', []),
+            'time_constraint'   => $request->input('time_constraint'),
+            'region'            => $request->input('region'),
+        ];
+
+        $result = $this->cbr->match(
+            $request->input('session_id'),
+            $user->id,
+            $entities,
+            $request->input('top_k', 5),
         );
 
         return response()->json([
-            'success'  => true,
-            'type'     => 'recipe_results',
-            'search_type' => 'name_search',  // ✨ Info tipe pencarian
-            'search_query' => $request->input('search_name'),
-            'recipes'  => $recipes,
-            'total'    => count($recipes),
+            'success'     => true,
+            'type'        => 'recipe_results',
+            'search_type' => 'cbr_match',
+            'recipes'     => $result['recipes'],
+            'total'       => count($result['recipes']),
+            'cbr_meta'    => $result['meta'] ?? null,
         ]);
     }
 
-    // 🔄 Fallback ke CBR matching (logic lama)
-    $entities = [
-        'ingredients' => [
-            'main'  => $request->input('ingredients', []),
-            'avoid' => $request->input('avoid_ingredients', []),
-        ],
-        'health_conditions' => $request->input('health_conditions', []),
-        'time_constraint'   => $request->input('time_constraint'),
-        'region'            => $request->input('region'),
-    ];
+    // =========================================================================
+    // ENDPOINT 3: History percakapan
+    // =========================================================================
 
-    $queryText = $this->buildQueryText($entities);
-    $cbrResult = $this->callNlpMatchRecipes(
-        $request->session_id,
-        $user->id,
-        $queryText,
-        $entities,
-        $request->input('top_k', 5)
-    );
-
-    if (!($cbrResult['success'] ?? false)) {
-        return $this->errorResponse('Gagal mencari resep. Silakan coba lagi.');
-    }
-
-    $recipes = $this->hydrateRecipes($cbrResult['matched_recipes'] ?? []);
-
-    return response()->json([
-        'success'  => true,
-        'type'     => 'recipe_results',
-        'search_type' => 'cbr_match', 
-        'recipes'  => $recipes,
-        'total'    => count($recipes),
-        'cbr_meta' => [ /* ... */ ],
-    ]);
-}
-
-    /**
-     * Get chat history
-     */
-    public function getHistory(Request $request)
+    public function getHistory(Request $request): JsonResponse
     {
-        $user = $request->auth_user ?? $request->user();
-        
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
-        }
-
+        $user  = $request->auth_user ?? $request->user();
         $limit = min((int) $request->input('limit', 50), 100);
 
         $history = UserQuery::where('user_id', $user->id)
@@ -230,7 +164,7 @@ class ChatbotController extends Controller
             ->get()
             ->reverse()
             ->values()
-            ->map(fn ($q) => [
+            ->map(fn($q) => [
                 'id'         => $q->id,
                 'message'    => $q->query_text,
                 'intent'     => $q->intent,
@@ -240,35 +174,21 @@ class ChatbotController extends Controller
                 'created_at' => $q->created_at,
             ]);
 
-        return response()->json([
-            'success' => true,
-            'history' => $history,
-        ]);
+        return response()->json(['success' => true, 'history' => $history]);
     }
 
-    /**
-     * Reset sesi percakapan
-     */
-    public function resetSession(Request $request)
-    {
-        $user = $request->auth_user ?? $request->user();
-        
-        if (!$user) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Unauthorized'
-            ], 401);
-        }
+    // =========================================================================
+    // ENDPOINT 4: Reset sesi
+    // =========================================================================
 
+    public function resetSession(Request $request): JsonResponse
+    {
+        $user      = $request->auth_user ?? $request->user();
         $sessionId = $request->input('session_id');
 
         if ($sessionId) {
-            // Reset di Python NLP
-            $this->callNlpDeleteSession($sessionId);
-
-            // Hapus dari cache Laravel
-            Cache::forget("chatbot_session_{$sessionId}");
-            Cache::forget("chatbot_last_results:{$sessionId}");
+            $this->nlp->deleteSession($sessionId);
+            $this->session->clearAll($sessionId);
         }
 
         return response()->json([
@@ -278,46 +198,131 @@ class ChatbotController extends Controller
         ]);
     }
 
-    /**
-     * Check NLP service health
-     */
-    public function checkNlpHealth()
-    {
-        try {
-            $response = Http::withHeaders(['X-Internal-Key' => env('NLP_SERVICE_KEY')])
-                ->timeout(10)
-                ->get("{$this->nlpApiUrl}/health");
+    // =========================================================================
+    // ENDPOINT 5: Health check NLP
+    // =========================================================================
 
-            return response()->json([
-                'success'    => true,
-                'nlp_status' => $response->json(),
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success'    => false,
-                'nlp_status' => ['error' => 'Service unreachable'],
-            ], 503);
-        }
+    public function checkNlpHealth(): JsonResponse
+    {
+        $status = $this->nlp->health();
+        return response()->json([
+            'success'    => $status['success'] ?? false,
+            'nlp_status' => $status,
+        ], ($status['success'] ?? false) ? 200 : 503);
     }
 
     // =========================================================================
-    // Action Handlers
+    // Private: Recipe resolution
     // =========================================================================
 
-    private function buildSearchResponse(string $sessionId, array $nlp, array $recipes, ?array $cbrMeta): \Illuminate\Http\JsonResponse
-    {
-        $botMessage   = $this->buildRecipeResponseMessage($nlp, $recipes);
-        $quickReplies = $this->buildQuickReplies($nlp, $recipes);
+    /**
+     * Resolusi resep berdasarkan conversation state.
+     *
+     * CATATAN PENTING — Entity yang digunakan untuk matching:
+     *
+     *   state=ready   → gunakan $nlp['context_entities'] (akumulasi bersih dari Flask)
+     *   state=lainnya → gunakan $nlp['entities'] (dari pesan saat ini saja)
+     *
+     * JANGAN pernah merge $nlp['entities'] + $nlp['context_entities'] secara mandiri
+     * di sini. Flask (Python) sudah mengelola topic-switch detection dengan benar.
+     * Merge mandiri akan memunculkan kembali entity lama yang sudah di-replace.
+     *
+     * @return array{0: array, 1: array|null}  [recipes, cbrMeta]
+     */
+    private function resolveRecipes(
+        string $sessionId,
+        int    $userId,
+        string $message,
+        array  $nlp,
+        string $convState,
+    ): array {
+        if ($convState === 'ready') {
+            $entities = $nlp['context_entities'] ?? [];
 
-        if (count($recipes) > 0) {
-            $this->cacheSessionRecipes($sessionId, collect($recipes)->pluck('id')->toArray());
-            Cache::put("chatbot_last_results:{$sessionId}", $recipes, now()->addMinutes($this->sessionTtl));
+            // Guard: context_entities kosong padahal state=ready → anomali
+            if ($this->isEmptyEntities($entities)) {
+                Log::warning('context_entities kosong saat state=ready', [
+                    'session_id' => $sessionId,
+                    'intent'     => $nlp['intent'] ?? null,
+                ]);
+                // Fallback ke entity turn ini (lebih baik dari tidak ada sama sekali)
+                $entities = $nlp['entities'] ?? [];
+                $recipes  = $this->cbr->matchFromDb($entities);
+                return [$recipes, null];
+            }
+
+            $result  = $this->cbr->match($sessionId, $userId, $entities);
+            $recipes = $result['recipes'];
+            $meta    = $result['meta'] ?? null;
+
+            return [$recipes, $meta];
         }
 
-        return $this->chatResponse(
+        // state != ready: gunakan entity dari pesan saat ini saja
+        $entities = $nlp['entities'] ?? [];
+
+        if ($this->isEmptyEntities($entities)) {
+            return [[], null]; // tidak ada entity bermakna → jangan search
+        }
+
+        return [$this->cbr->matchFromDb($entities), null];
+    }
+
+    private function isEmptyEntities(array $entities): bool
+    {
+        return empty($entities['ingredients']['main'] ?? [])
+            && empty($entities['health_conditions'] ?? [])
+            && empty($entities['region'] ?? null)
+            && is_null($entities['time_constraint'] ?? null);
+    }
+
+    // =========================================================================
+    // Private: Action routing
+    // =========================================================================
+
+    private function routeAction(
+        string  $action,
+        string  $sessionId,
+        array   $nlp,
+        array   $recipes,
+        ?array  $cbrMeta,
+    ): JsonResponse {
+        return match ($action) {
+            'show_restrictions' => $this->handleShowRestrictions($nlp, $sessionId),
+            'show_detail'       => $this->handleShowDetail($nlp, $sessionId, $recipes),
+            'chitchat'          => $this->buildChatResponse(
+                sessionId:    $sessionId,
+                botMessage:   $nlp['bot_message'],
+                quickReplies: $nlp['quick_replies'] ?? [],
+                recipes:      [],
+                nlp:          $nlp,
+                type:         'chat',
+            ),
+            default => $this->buildSearchResponse($sessionId, $nlp, $recipes, $cbrMeta),
+        };
+    }
+
+    // =========================================================================
+    // Private: Action handlers
+    // =========================================================================
+
+    private function buildSearchResponse(
+        string $sessionId,
+        array  $nlp,
+        array  $recipes,
+        ?array $cbrMeta,
+    ): JsonResponse {
+        // Gunakan context_entities (bukan entities mentah) untuk pesan response
+        $contextEntities = $nlp['context_entities'] ?? [];
+
+        if (count($recipes) > 0) {
+            $this->session->cacheRecipes($sessionId, $recipes, $this->sessionTtl);
+        }
+
+        return $this->buildChatResponse(
             sessionId:    $sessionId,
-            botMessage:   $botMessage,
-            quickReplies: $quickReplies,
+            botMessage:   $this->buildRecipeMessage($contextEntities, count($recipes)),
+            quickReplies: $this->buildQuickReplies($contextEntities, $recipes),
             recipes:      $recipes,
             nlp:          $nlp,
             type:         'recipe_results',
@@ -325,17 +330,18 @@ class ChatbotController extends Controller
         );
     }
 
-    private function handleShowDetail(array $nlp, string $sessionId, array $currentRecipes): \Illuminate\Http\JsonResponse
+    private function handleShowDetail(array $nlp, string $sessionId, array $currentRecipes): JsonResponse
     {
-        $recipeIndex  = ($nlp['recipe_index'] ?? 1) - 1;
-        
-        $recipes = !empty($currentRecipes) ? $currentRecipes : $this->getCachedSessionRecipesWithDetails($sessionId);
-        
+        $recipeIndex = ($nlp['recipe_index'] ?? 1) - 1;
+        $recipes     = !empty($currentRecipes)
+            ? $currentRecipes
+            : $this->session->getCachedRecipes($sessionId);
+
         if (empty($recipes)) {
-            return $this->chatResponse(
+            return $this->buildChatResponse(
                 sessionId:    $sessionId,
                 botMessage:   'Belum ada resep yang dicari. Coba cari resep dulu ya! 😊',
-                quickReplies: ['Cari resep ayam', 'Resep untuk diabetes', 'Masakan Padang'],
+                quickReplies: ['Cari resep ayam', 'Resep untuk diabetes'],
                 recipes:      [],
                 nlp:          $nlp,
                 type:         'chat',
@@ -344,49 +350,24 @@ class ChatbotController extends Controller
 
         $recipe = $recipes[$recipeIndex] ?? $recipes[0];
 
-        if (is_numeric($recipe)) {
-            $recipeId = $recipe;
-            $recipeData = Recipe::with([
-                'recipeIngredients.ingredient',
-                'recipeSuitability.healthCondition',
-            ])->find($recipeId);
-            
-            if (!$recipeData) {
-                return $this->chatResponse(
-                    sessionId:    $sessionId,
-                    botMessage:   'Resep tidak ditemukan. Coba cari lagi ya!',
-                    quickReplies: ['Cari resep baru'],
-                    recipes:      [],
-                    nlp:          $nlp,
-                    type:         'chat',
-                );
-            }
-            
-            $formattedRecipe = $this->formatRecipe($recipeData);
-        } else {
-            $formattedRecipe = $recipe;
-        }
-
-        return $this->chatResponse(
+        return $this->buildChatResponse(
             sessionId:    $sessionId,
-            botMessage:   "📖 Berikut detail resep **{$formattedRecipe['nama']}**:",
-            quickReplies: ['Cari resep lain'],
-            recipes:      [$formattedRecipe],
+            botMessage:   "📖 Berikut detail resep **{$recipe['nama']}**:",
+            quickReplies: ['Simpan ke favorit', 'Cari resep lain'],
+            recipes:      [$recipe],
             nlp:          $nlp,
             type:         'recipe_detail',
         );
     }
 
-    private function handleShowRestrictions(array $nlp, string $sessionId): \Illuminate\Http\JsonResponse
+    private function handleShowRestrictions(array $nlp, string $sessionId): JsonResponse
     {
-        $healthConditions = $nlp['context_entities']['health_conditions']
-            ?? $nlp['entities']['health_conditions']
-            ?? [];
+        $healthConditions = $nlp['context_entities']['health_conditions'] ?? [];
 
         if (empty($healthConditions)) {
-            return $this->chatResponse(
+            return $this->buildChatResponse(
                 sessionId:    $sessionId,
-                botMessage:   'Sebutkan kondisi kesehatanmu ya, misalnya: diabetes, kolesterol, hipertensi. 😊',
+                botMessage:   'Sebutkan kondisi kesehatanmu ya, misalnya: diabetes, kolesterol. 😊',
                 quickReplies: ['Diabetes', 'Kolesterol', 'Hipertensi', 'Asam Urat'],
                 recipes:      [],
                 nlp:          $nlp,
@@ -399,7 +380,6 @@ class ChatbotController extends Controller
             $cond = HealthCondition::where('nama', $condName)
                 ->with(['restrictions.ingredient'])
                 ->first();
-
             if (!$cond) continue;
 
             $lines[] = "\n📋 **Pantangan untuk {$cond->nama}:**";
@@ -407,22 +387,17 @@ class ChatbotController extends Controller
             $batasi  = $cond->restrictions->where('severity', 'batasi');
             $anjuran = $cond->restrictions->where('severity', 'anjuran');
 
-            if ($hindari->isNotEmpty()) {
-                $lines[] = '🚫 Hindari: ' . $hindari->map(fn ($r) => $r->ingredient->nama)->implode(', ');
-            }
-            if ($batasi->isNotEmpty()) {
-                $lines[] = '⚠️ Batasi: ' . $batasi->map(fn ($r) => $r->ingredient->nama)->implode(', ');
-            }
-            if ($anjuran->isNotEmpty()) {
-                $lines[] = '✅ Dianjurkan: ' . $anjuran->map(fn ($r) => $r->ingredient->nama)->implode(', ');
-            }
+            if ($hindari->isNotEmpty())
+                $lines[] = '🚫 Hindari: ' . $hindari->map(fn($r) => $r->ingredient->nama)->implode(', ');
+            if ($batasi->isNotEmpty())
+                $lines[] = '⚠️ Batasi: ' . $batasi->map(fn($r) => $r->ingredient->nama)->implode(', ');
+            if ($anjuran->isNotEmpty())
+                $lines[] = '✅ Dianjurkan: ' . $anjuran->map(fn($r) => $r->ingredient->nama)->implode(', ');
         }
 
-        $botMsg = implode("\n", $lines) ?: 'Informasi kondisi kesehatan tidak ditemukan.';
-
-        return $this->chatResponse(
+        return $this->buildChatResponse(
             sessionId:    $sessionId,
-            botMessage:   $botMsg,
+            botMessage:   implode("\n", $lines) ?: 'Informasi kondisi kesehatan tidak ditemukan.',
             quickReplies: ['Carikan resep yang cocok', 'Kondisi lain'],
             recipes:      [],
             nlp:          $nlp,
@@ -431,560 +406,54 @@ class ChatbotController extends Controller
     }
 
     // =========================================================================
-    // CBR Integration Helpers
-    // =========================================================================
-
-    private function callNlpChat(string $sessionId, string $userId, string $message, bool $reset = false): array
-    {
-        try {
-            $payload = [
-                'session_id' => $sessionId,
-                'user_id'    => $userId,
-                'message'    => $message,
-            ];
-            
-            if ($reset) {
-                $payload['reset'] = true;
-            }
-
-            $response = Http::withHeaders([
-                'X-Internal-Key' => env('NLP_SERVICE_KEY'),
-                'Content-Type'   => 'application/json',
-            ])
-            ->timeout($this->nlpTimeout)
-            ->post("{$this->nlpApiUrl}/api/chat", $payload);
-
-            if ($response->successful()) {
-                return $response->json();
-            }
-
-            Log::error('NLP API Error', [
-                'status' => $response->status(),
-                'body'   => $response->body(),
-            ]);
-            return ['success' => false, 'error' => 'NLP API returned ' . $response->status()];
-
-        } catch (\Exception $e) {
-            Log::error('NLP Connection Error: ' . $e->getMessage());
-            return ['success' => false, 'error' => 'Cannot connect to NLP service'];
-        }
-    }
-
-    private function callNlpMatchRecipes(string $sessionId, int $userId, string $queryText, array $entities, int $topK = 5): array
-    {
-        try {
-            $response = Http::withHeaders([
-                'X-Internal-Key' => env('NLP_SERVICE_KEY'),
-                'Content-Type'   => 'application/json',
-            ])
-            ->timeout($this->nlpTimeout)
-            ->post("{$this->nlpApiUrl}/api/cbr/match", [
-                'session_id' => $sessionId,
-                'user_id'    => (string) $userId,
-                'query_text' => $queryText,
-                'entities'   => $entities,
-                'top_k'      => $topK,
-            ]);
-
-            if ($response->successful()) {
-                return $response->json();
-            }
-
-            Log::error('NLP CBR API Error', [
-                'status' => $response->status(),
-                'body'   => $response->body(),
-            ]);
-            return ['success' => false, 'matched_recipes' => []];
-
-        } catch (\Exception $e) {
-            Log::error('NLP CBR Connection Error: ' . $e->getMessage());
-            return ['success' => false, 'matched_recipes' => []];
-        }
-    }
-
-    private function callNlpDeleteSession(string $sessionId): void
-    {
-        try {
-            Http::withHeaders(['X-Internal-Key' => env('NLP_SERVICE_KEY')])
-                ->timeout(10)
-                ->delete("{$this->nlpApiUrl}/api/session/{$sessionId}");
-        } catch (\Exception $e) {
-            Log::warning('Failed to delete NLP session: ' . $e->getMessage());
-        }
-    }
-
-    private function matchRecipesWithCBR(string $sessionId, int $userId, string $message, array $entities, int $topK = 5): array
-    {
-        $queryText = $this->buildQueryText($entities);
-        return $this->callNlpMatchRecipes($sessionId, $userId, $queryText, $entities, $topK);
-    }
-
-    private function hydrateRecipes(array $matchedRecipes): array
-    {
-        if (empty($matchedRecipes)) {
-            return [];
-        }
-
-        $recipeIds = array_column($matchedRecipes, 'recipe_id');
-        $matchMap  = array_column($matchedRecipes, null, 'recipe_id');
-
-        $dbRecipes = Recipe::with([
-                'recipeIngredients.ingredient',
-                'recipeSuitability.healthCondition',
-            ])
-            ->whereIn('id', $recipeIds)
-            ->where('status', 'approved')
-            ->get()
-            ->keyBy('id');
-
-        $result = [];
-        foreach ($matchedRecipes as $match) {
-            $rid    = $match['recipe_id'];
-            $recipe = $dbRecipes->get($rid);
-
-            if (!$recipe) {
-                continue;
-            }
-
-            $formatted = $this->formatRecipe($recipe);
-            
-            $formatted['rank_position']    = $match['rank_position'];
-            $formatted['match_score']      = $match['match_score'];
-            $formatted['ingredients_main'] = $match['ingredients_main'] ?? [];
-            $formatted['suitable_for']     = $match['suitable_for'] ?? [];
-            $formatted['score_breakdown']  = $match['score_breakdown'] ?? [];
-
-            $result[] = $formatted;
-        }
-
-        usort($result, fn($a, $b) => $a['rank_position'] <=> $b['rank_position']);
-
-        return $result;
-    }
-
-    private function buildQueryText(array $entities): string
-    {
-        $parts = [];
-        $ings  = $entities['ingredients']['main'] ?? [];
-        if ($ings) {
-            $parts[] = 'mau masak ' . implode(' ', $ings);
-        }
-        if ($conds = $entities['health_conditions'] ?? []) {
-            $parts[] = 'untuk ' . implode(' ', $conds);
-        }
-        if ($region = $entities['region'] ?? null) {
-            $parts[] = "masakan {$region}";
-        }
-        if ($time = $entities['time_constraint'] ?? null) {
-            $parts[] = "kurang dari {$time} menit";
-        }
-        return implode(' ', $parts) ?: 'resep masakan';
-    }
-
-    // =========================================================================
-    // Database Recipe Matching (Fallback)
-    // =========================================================================
-
-    private function matchRecipesFromDB(array $entities): array
-    {
-        $query = Recipe::query()
-            ->where('status', 'approved')
-            ->with([
-                'recipeIngredients.ingredient',
-                'recipeSuitability.healthCondition',
-            ]);
-
-        $mainIngredients = $entities['ingredients']['main'] ?? [];
-        if (!empty($mainIngredients)) {
-            $query->whereHas('recipeIngredients.ingredient', function ($q) use ($mainIngredients) {
-                $q->where(function ($inner) use ($mainIngredients) {
-                    foreach ($mainIngredients as $ing) {
-                        $inner->orWhere('nama', 'LIKE', "%{$ing}%");
-                    }
-                });
-            });
-        }
-
-        $avoidIngredients = $entities['ingredients']['avoid'] ?? [];
-        if (!empty($avoidIngredients)) {
-            $query->whereDoesntHave('recipeIngredients.ingredient', function ($q) use ($avoidIngredients) {
-                $q->where(function ($inner) use ($avoidIngredients) {
-                    foreach ($avoidIngredients as $ing) {
-                        $inner->orWhere('nama', 'LIKE', "%{$ing}%");
-                    }
-                });
-            });
-        }
-
-        $healthConditions = $entities['health_conditions'] ?? [];
-        if (!empty($healthConditions)) {
-            foreach ($healthConditions as $condName) {
-                $query->whereHas('recipeSuitability', function ($q) use ($condName) {
-                    $q->whereHas('healthCondition', fn ($q2) =>
-                        $q2->where('nama', 'LIKE', "%{$condName}%")
-                    )->where('is_suitable', true);
-                });
-            }
-        }
-
-        $timeConstraint = $entities['time_constraint'] ?? null;
-        if ($timeConstraint !== null) {
-            $query->where('waktu_masak', '<=', (int) $timeConstraint);
-        }
-
-        $region = $entities['region'] ?? null;
-        if ($region) {
-            $query->where('region', 'LIKE', "%{$region}%");
-        }
-
-        $query->orderByDesc('avg_rating')
-              ->orderByDesc('view_count');
-
-        $recipes = $query->limit(8)->get();
-
-        return $recipes->map(fn ($r) => $this->formatRecipe($r))->toArray();
-    }
-
-
-    // =========================================================================
-// Feedback Methods
-// =========================================================================
-
-/**
- * Submit feedback untuk resep yang direkomendasikan
- * Route: POST /api/chatbot/feedback
- */
-public function submitFeedback(Request $request): \Illuminate\Http\JsonResponse
-{
-    $request->validate([
-        'session_id'    => 'required|string|max:100',
-        'recipe_id'     => 'required|integer|exists:recipes,id',
-        'rating'        => 'required|integer|in:1,-1',
-        'feedback_type' => 'nullable|string|in:explicit,implicit',
-        'rank_shown'    => 'nullable|integer|min:1|max:10',
-        'query_hash'    => 'nullable|string|max:32',
-        'matched_score' => 'nullable|numeric|min:0|max:100',
-    ]);
-
-    $user = $request->auth_user ?? $request->user();
-    if (!$user) {
-        return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
-    }
-
-    // 1. Simpan feedback ke DB
-    $feedback = NlpFeedback::create([
-        'user_id'       => $user->id,
-        'session_id'    => $request->input('session_id'),
-        'recipe_id'     => $request->input('recipe_id'),
-        'rating'        => $request->input('rating'),
-        'feedback_type' => $request->input('feedback_type', 'explicit'),
-        'rank_shown'    => $request->input('rank_shown', 1),
-        'query_hash'    => $request->input('query_hash'),
-        'matched_score' => $request->input('matched_score'),
-        // Ambil query_text dari session cache
-        'query_text'    => $this->getLastQueryText($request->input('session_id')),
-        // Link ke user_query terkait jika ada
-        'user_query_id' => $this->getLastUserQueryId($user->id),
-    ]);
-
-    // 2. Update matched_recipes (tandai sudah diberi feedback)
-    MatchedRecipe::where('recipe_id', $request->input('recipe_id'))
-        ->whereHas('userQuery', fn($q) => $q->where('user_id', $user->id))
-        ->latest()
-        ->limit(1)
-        ->update([
-            'feedback_given'  => true,
-            'feedback_rating' => $request->input('rating'),
-        ]);
-
-    // 3. Kirim ke Flask untuk update CBR case weight
-    $nlpResult = $this->callNlpFeedback(
-        recipeId:     $request->input('recipe_id'),
-        rating:       $request->input('rating'),
-        feedbackType: $request->input('feedback_type', 'explicit'),
-        queryHash:    $request->input('query_hash'),
-    );
-
-    return response()->json([
-        'success'    => true,
-        'feedback_id'=> $feedback->id,
-        'nlp_update' => $nlpResult,
-        'message'    => $request->input('rating') === 1
-            ? 'Terima kasih atas feedback positifnya! 👍'
-            : 'Terima kasih, kami akan terus meningkatkan rekomendasi. 🙏',
-    ]);
-}
-
-/**
- * Export feedback untuk grid search (admin only)
- * Route: GET /api/admin/feedback/export
- */
-public function exportFeedback(Request $request): \Illuminate\Http\JsonResponse
-{
-    // $this->authorize('admin'); // Uncomment jika menggunakan authorization
-    $limit = min((int) $request->input('limit', 1000), 5000);
-
-    $feedback = DB::table('feedback_export_for_grid_search')
-        ->latest('created_at')
-        ->limit($limit)
-        ->get()
-        ->map(function ($row) {
-            return [
-                'query_text' => $row->query_text,
-                'entities'   => json_decode($row->entities_json ?? '{}', true),
-                'recipe_id'  => (int) $row->recipe_id,
-                'rating'     => (int) $row->rating,
-                'rank_shown' => (int) $row->rank_shown,
-                'query_hash' => $row->query_hash,
-            ];
-        })
-        ->toArray();
-
-    return response()->json($feedback);
-}
-
-/**
- * Reload kamus NLP (informal_map.json, synonyms/*.json) tanpa restart service.
- * Dipanggil setelah tim konten update file JSON kamus.
- * 
- * Route: POST /api/chatbot/reload-dictionaries
- */
-public function reloadDictionaries(Request $request)
-{
-    $user = $request->auth_user ?? $request->user();
-    
-    if (!$user) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Unauthorized'
-        ], 401);
-    }
-
-    // Cek apakah user memiliki role admin - cara 1: cek nama role
-    $adminRoleId = Role::where('name', 'admin')->value('id');
-    
-    if ($user->role_id !== $adminRoleId) {
-        Log::warning('Non-admin user attempted to reload dictionaries', [
-            'user_id' => $user->id,
-            'user_email' => $user->email,
-            'user_role_id' => $user->role_id
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Forbidden: Hanya admin yang dapat mengakses fitur ini'
-        ], 403);
-    }
-
-    try {
-        $response = Http::withHeaders([
-            'X-Internal-Key' => env('NLP_SERVICE_KEY'),
-            'Content-Type' => 'application/json',
-        ])
-        ->timeout(30)
-        ->post("{$this->nlpApiUrl}/api/reload-dicts", []);
-
-        if ($response->successful()) {
-            $data = $response->json();
-            
-            Log::info('NLP Dictionaries reloaded by admin', [
-                'admin_id' => $user->id,
-                'admin_email' => $user->email,
-                'stats' => $data['stats'] ?? null
-            ]);
-
-            return response()->json([
-                'success' => true,
-                'message' => $data['message'] ?? 'Dictionaries reloaded successfully',
-                'stats' => $data['stats'] ?? null
-            ]);
-        }
-
-        $errorBody = $response->json();
-        $errorMessage = $errorBody['error'] ?? 'Unknown error from NLP service';
-
-        Log::error('Failed to reload NLP dictionaries', [
-            'status' => $response->status(),
-            'error' => $errorMessage,
-            'admin_id' => $user->id
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Gagal me-reload kamus NLP',
-            'error' => $errorMessage
-        ], $response->status());
-
-    } catch (\Exception $e) {
-        Log::error('Exception when reloading NLP dictionaries', [
-            'admin_id' => $user->id,
-            'error' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ]);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Terjadi kesalahan saat menghubungi NLP service',
-            'error' => $e->getMessage()
-        ], 500);
-    }
-}
-
-    // =========================================================================
-    // Feedback Helpers
+    // Private: Response builder
     // =========================================================================
 
     /**
-     * Kirim feedback ke NLP service untuk update CBR case weight
+     * Bangun pesan deskripsi hasil pencarian resep.
+     * Menggunakan context_entities (bukan entities mentah) agar konsisten
+     * dengan entity yang dipakai untuk CBR matching.
      */
-    private function callNlpFeedback(int $recipeId, int $rating, string $feedbackType, ?string $queryHash): array
+    private function buildRecipeMessage(array $contextEntities, int $count): string
     {
-        try {
-            $response = Http::withHeaders([
-                'X-Internal-Key' => env('NLP_SERVICE_KEY'),
-                'Content-Type'   => 'application/json',
-            ])
-            ->timeout(10)
-            ->post("{$this->nlpApiUrl}/api/feedback", [
-                'recipe_id'     => $recipeId,
-                'rating'        => $rating,
-                'feedback_type' => $feedbackType,
-                'query_hash'    => $queryHash,
-            ]);
-
-            if ($response->successful()) {
-                return $response->json();
-            }
-
-            Log::warning('NLP Feedback API error', [
-                'status' => $response->status(),
-                'body'   => $response->body(),
-            ]);
-            
-            return ['success' => false, 'error' => 'NLP service returned ' . $response->status()];
-            
-        } catch (\Exception $e) {
-            Log::warning('NLP Feedback call failed: ' . $e->getMessage());
-            return ['success' => false, 'error' => $e->getMessage()];
-        }
-    }
-
-    /**
-     * Get last query text from cache
-     */
-    private function getLastQueryText(string $sessionId): ?string
-    {
-        return Cache::get("chatbot_last_query_text:{$sessionId}");
-    }
-
-    /**
-     * Get last user query ID
-     */
-    private function getLastUserQueryId(int $userId): ?int
-    {
-        return UserQuery::where('user_id', $userId)
-            ->latest()
-            ->value('id');
-    }
-
-    // =========================================================================
-    // Formatters & Helpers
-    // =========================================================================
-
-    private function formatRecipe($recipe): array
-    {
-        $ingredients = $recipe->recipeIngredients
-            ? $recipe->recipeIngredients->map(fn ($ri) => [
-                'nama'    => $ri->ingredient->nama ?? null,
-                'jumlah'  => $ri->jumlah,
-                'satuan'  => $ri->satuan,
-                'is_main' => (bool) $ri->is_main,
-            ])->filter(fn ($i) => $i['nama'])->values()->toArray()
-            : [];
-
-        $suitability = $recipe->recipeSuitability
-            ? $recipe->recipeSuitability->map(fn ($s) => [
-                'condition'  => $s->healthCondition->nama ?? null,
-                'is_suitable'=> (bool) $s->is_suitable,
-                'notes'      => $s->notes,
-            ])->filter(fn ($s) => $s['condition'])->values()->toArray()
-            : [];
-
-        return [
-            'id'           => $recipe->id,
-            'nama'         => $recipe->nama,
-            'deskripsi'    => $recipe->deskripsi,
-            'gambar'       => $recipe->gambar,
-            'region'       => $recipe->region,
-            'waktu_masak'  => $recipe->waktu_masak,
-            'kategori'     => $recipe->kategori,
-            'avg_rating'   => (float) $recipe->avg_rating,
-            'total_ratings'=> (int) $recipe->total_ratings,
-            'view_count'   => (int) $recipe->view_count,
-            'ingredients'  => $ingredients,
-            'suitability'  => $suitability,
-        ];
-    }
-
-    private function buildRecipeResponseMessage(array $nlp, array $recipes): string
-    {
-        $count = count($recipes);
         if ($count === 0) {
-            $suggestions = [
+            return implode("\n", [
                 '😔 Hmm, belum ada resep yang cocok dengan kriteriamu.',
                 '',
-                'Coba ubah atau kurangi filter pencarian, misalnya:',
+                'Coba ubah atau kurangi filter pencarian:',
                 '• Ganti bahan dengan yang lebih umum',
                 '• Hapus batasan waktu masak',
                 '• Coba tanpa filter region',
-            ];
-            return implode("\n", $suggestions);
+            ]);
         }
 
-        $entities = $nlp['context_entities'] ?? $nlp['entities'] ?? [];
-        $parts    = [];
-
-        $main = $entities['ingredients']['main'] ?? [];
-        if (!empty($main)) {
+        $parts = [];
+        if ($main = $contextEntities['ingredients']['main'] ?? [])
             $parts[] = 'bahan **' . implode(', ', $main) . '**';
-        }
-
-        $health = $entities['health_conditions'] ?? [];
-        if (!empty($health)) {
+        if ($health = $contextEntities['health_conditions'] ?? [])
             $parts[] = 'cocok untuk **' . implode(', ', $health) . '**';
-        }
-
-        $region = $entities['region'] ?? null;
-        if ($region) {
+        if ($region = $contextEntities['region'] ?? null)
             $parts[] = "masakan **{$region}**";
-        }
-
-        $time = $entities['time_constraint'] ?? null;
-        if ($time) {
+        if ($time = $contextEntities['time_constraint'] ?? null)
             $parts[] = "waktu masak ≤ **{$time} menit**";
-        }
 
-        $criteriaText = !empty($parts) ? ' dengan ' . implode(', ', $parts) : '';
-
+        $criteria = !empty($parts) ? ' dengan ' . implode(', ', $parts) : '';
         return $count === 1
-            ? "✅ Aku menemukan **1 resep**{$criteriaText}:"
-            : "✅ Aku menemukan **{$count} resep**{$criteriaText}:";
+            ? "✅ Aku menemukan **1 resep**{$criteria}:"
+            : "✅ Aku menemukan **{$count} resep**{$criteria}:";
     }
 
-    private function buildQuickReplies(array $nlp, array $recipes): array
+    private function buildQuickReplies(array $contextEntities, array $recipes): array
     {
         $replies = [];
 
         if (count($recipes) > 0) {
             $replies[] = 'Lihat detail resep 1';
-            if (count($recipes) > 1) {
-                $replies[] = 'Lihat detail resep 2';
-                $replies[] = 'Lihat detail resep 3';
-            }
+            if (count($recipes) > 1) $replies[] = 'Lihat detail resep 2';
+            if (count($recipes) > 2) $replies[] = 'Lihat detail resep 3';
         }
 
-        $health = $nlp['context_entities']['health_conditions'] ?? [];
-        if (empty($health)) {
+        if (empty($contextEntities['health_conditions'] ?? [])) {
             $replies[] = 'Resep untuk diabetes';
             $replies[] = 'Resep untuk kolesterol';
         }
@@ -993,8 +462,55 @@ public function reloadDictionaries(Request $request)
         return array_slice(array_unique($replies), 0, 5);
     }
 
+    private function buildChatResponse(
+        string  $sessionId,
+        string  $botMessage,
+        array   $quickReplies,
+        array   $recipes,
+        array   $nlp,
+        string  $type = 'chat',
+        ?array  $cbrMeta = null,
+    ): JsonResponse {
+        $response = [
+            'success'                => true,
+            'type'                   => $type,
+            'session_id'             => $sessionId,
+            'bot_message'            => $botMessage,
+            'quick_replies'          => $quickReplies,
+            'recipes'                => $recipes,
+            'total_found'            => count($recipes),
+            'conversation_state'     => $nlp['conversation_state'] ?? 'collecting',
+            'clarification_needed'   => $nlp['clarification_needed'] ?? false,
+            'clarification_question' => $nlp['clarification_question'] ?? null,
+            'turn_count'             => $nlp['turn_count'] ?? 0,
+            'nlp_data'               => [
+                'intent'     => $nlp['intent'] ?? null,
+                'confidence' => $nlp['confidence'] ?? null,
+                'status'     => $nlp['status'] ?? null,
+                'entities'   => $nlp['entities'] ?? [],
+            ],
+        ];
+
+        if ($cbrMeta !== null) {
+            $response['cbr_meta'] = $cbrMeta;
+        }
+
+        return response()->json($response);
+    }
+
+    private function errorResponse(string $message, ?string $detail = null): JsonResponse
+    {
+        return response()->json([
+            'success'     => false,
+            'type'        => 'error',
+            'bot_message' => $message,
+            'recipes'     => [],
+            'error'       => $detail,
+        ], 500);
+    }
+
     // =========================================================================
-    // Database Helpers
+    // Private: DB helpers
     // =========================================================================
 
     private function saveUserQuery(int $userId, string $message, array $nlp): ?UserQuery
@@ -1012,13 +528,10 @@ public function reloadDictionaries(Request $request)
                 'intent'     => $nlp['intent']     ?? null,
                 'confidence' => $nlp['confidence'] ?? null,
                 'status'     => $status,
-                'entities'   => json_encode(
-                    $nlp['entities'] ?? [],
-                    JSON_UNESCAPED_UNICODE
-                ),
+                'entities'   => json_encode($nlp['entities'] ?? [], JSON_UNESCAPED_UNICODE),
             ]);
         } catch (\Exception $e) {
-            Log::warning('Failed to save user_query: ' . $e->getMessage());
+            Log::warning('saveUserQuery failed: ' . $e->getMessage());
             return null;
         }
     }
@@ -1035,86 +548,12 @@ public function reloadDictionaries(Request $request)
                 ]);
             }
         } catch (\Exception $e) {
-            Log::warning('Failed to save matched_recipes: ' . $e->getMessage());
+            Log::warning('saveMatchedRecipes failed: ' . $e->getMessage());
         }
     }
-
-    // =========================================================================
-    // Session Cache
-    // =========================================================================
 
     private function generateSessionId(int $userId): string
     {
         return "user_{$userId}_" . Str::random(12);
-    }
-
-    private function cacheSessionRecipes(string $sessionId, array $recipeIds): void
-    {
-        Cache::put(
-            "chatbot_session_{$sessionId}_recipes",
-            $recipeIds,
-            now()->addMinutes($this->sessionTtl)
-        );
-    }
-
-    private function getCachedSessionRecipes(string $sessionId): array
-    {
-        return Cache::get("chatbot_session_{$sessionId}_recipes", []);
-    }
-
-    private function getCachedSessionRecipesWithDetails(string $sessionId): array
-    {
-        return Cache::get("chatbot_last_results:{$sessionId}", []);
-    }
-
-    // =========================================================================
-    // Response Builder
-    // =========================================================================
-
-    private function chatResponse(
-        string $sessionId,
-        string $botMessage,
-        array  $quickReplies,
-        array  $recipes,
-        array  $nlp,
-        string $type = 'chat',
-        ?array $cbrMeta = null,
-    ): \Illuminate\Http\JsonResponse {
-        $response = [
-            'success'              => true,
-            'type'                 => $type,
-            'session_id'           => $sessionId,
-            'bot_message'          => $botMessage,
-            'quick_replies'        => $quickReplies,
-            'recipes'              => $recipes,
-            'total_found'          => count($recipes),
-            'conversation_state'   => $nlp['conversation_state'] ?? 'collecting',
-            'clarification_needed' => $nlp['clarification_needed'] ?? false,
-            'clarification_question' => $nlp['clarification_question'] ?? null,
-            'turn_count'           => $nlp['turn_count'] ?? 0,
-            'nlp_data' => [
-                'intent'     => $nlp['intent']     ?? null,
-                'confidence' => $nlp['confidence'] ?? null,
-                'status'     => $nlp['status']     ?? null,
-                'entities'   => $nlp['entities']   ?? [],
-            ],
-        ];
-
-        if ($cbrMeta !== null) {
-            $response['cbr_meta'] = $cbrMeta;
-        }
-
-        return response()->json($response);
-    }
-
-    private function errorResponse(string $message, ?string $detail = null): \Illuminate\Http\JsonResponse
-    {
-        return response()->json([
-            'success'     => false,
-            'type'        => 'error',
-            'bot_message' => $message,
-            'recipes'     => [],
-            'error'       => $detail,
-        ], 500);
     }
 }

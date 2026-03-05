@@ -199,6 +199,101 @@ class NlpService
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // 6. NLP Retrain dari Conversation History
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Kirim conversation history ke Flask untuk retrain intent classifier.
+     *
+     * Dipanggil oleh artisan command: php artisan nlp:retrain
+     *
+     * @param  array  $history         [{"query_text": str, "intent": str, "confidence": float}, ...]
+     * @param  float  $minConfidence   Threshold confidence untuk menerima sample
+     * @return array  {"success": bool, "train_score": float, "test_score": float, "new_samples": int}
+     */
+    public function retrainIntentClassifier(array $history, float $minConfidence = 0.75): array
+    {
+        try {
+            return $this->post('/api/nlp/retrain', [
+                'history'        => $history,
+                'min_confidence' => $minConfidence,
+            ], timeout: 120); // Retrain butuh waktu lebih lama
+        } catch (\Exception $e) {
+            Log::error('NlpService::retrainIntentClassifier error', ['error' => $e->getMessage()]);
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. CBR Force Rebuild (berbeda dari buildCbrIndex yang skip jika hash sama)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Force rebuild CBR index tanpa hash check.
+     *
+     * Gunakan ini ketika ada resep baru di-approve atau data resep berubah.
+     * buildCbrIndex() skip rebuild jika hash data tidak berubah.
+     * forceRebuildCbrIndex() selalu rebuild.
+     *
+     * @param  string $reason  Alasan rebuild (untuk logging)
+     * @return array
+     */
+    public function forceRebuildCbrIndex(string $reason = 'manual'): array
+    {
+        $recipes = $this->fetchRecipesForCbr();
+
+        if (empty($recipes)) {
+            return ['success' => false, 'error' => 'No approved recipes found'];
+        }
+
+        try {
+            $response = $this->post('/api/cbr/rebuild', [
+                'recipes' => $recipes,
+                'reason'  => $reason,
+            ], timeout: 30);
+
+            if ($response['success'] ?? false) {
+                Cache::put('cbr_index_hash',  $response['index_hash']    ?? '', now()->addDay());
+                Cache::put('cbr_cases_count', $response['cases_indexed'] ?? 0,  now()->addDay());
+                Cache::put('cbr_last_rebuild', now()->toIso8601String(),         now()->addDay());
+
+                Log::info('CBR index force-rebuilt', [
+                    'cases'  => $response['cases_indexed'] ?? 0,
+                    'reason' => $reason,
+                    'hash'   => $response['index_hash'] ?? '',
+                ]);
+            }
+
+            return $response;
+        } catch (\Exception $e) {
+            Log::error('NlpService::forceRebuildCbrIndex error', ['error' => $e->getMessage()]);
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 8. Bulk Feedback untuk seeding historical weights
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Kirim batch feedback ke Flask CBR engine.
+     *
+     * Dipakai oleh: php artisan cbr:sync-feedback
+     *
+     * @param  array  $feedbacks  [{"recipe_id": int, "rating": int}, ...]
+     * @return array
+     */
+    public function bulkFeedback(array $feedbacks): array
+    {
+        try {
+            return $this->post('/api/cbr/feedback/bulk', ['feedbacks' => $feedbacks]);
+        } catch (\Exception $e) {
+            Log::error('NlpService::bulkFeedback error', ['error' => $e->getMessage()]);
+            return ['success' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // 6. Persist query results ke DB
     // ─────────────────────────────────────────────────────────────────────────
 
