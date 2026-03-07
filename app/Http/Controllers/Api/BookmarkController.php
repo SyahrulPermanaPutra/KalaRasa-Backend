@@ -102,4 +102,32 @@ class BookmarkController extends Controller
             'message' => 'Resep berhasil dihapus dari bookmark',
         ]);
     }
+
+    /**
+     * Toggle status bookmark resep
+     */
+    public function toggle(Request $request, $recipeId)
+    {
+        $user = $request->get('auth_user');
+        
+        // Pastikan resep ada
+        $recipe = Recipe::find($recipeId);
+        if (!$recipe) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Resep tidak ditemukan'
+            ], 404);
+        }
+
+        // Toggle bookmark
+        $isBookmarked = $user->bookmarks()->toggle($recipeId);
+        
+        $status = count($isBookmarked['attached']) > 0;
+
+        return response()->json([
+            'success' => true,
+            'message' => $status ? 'Resep berhasil ditambahkan ke bookmark' : 'Resep berhasil dihapus dari bookmark',
+            'is_bookmarked' => $status
+        ]);
+    }
 }

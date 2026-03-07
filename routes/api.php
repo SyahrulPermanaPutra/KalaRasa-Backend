@@ -62,6 +62,7 @@ Route::middleware(['auth.sso'])->group(function () {
 
     // Recipe Routes (User)
     Route::prefix('recipe')->group(function () {
+        Route::get('/my', [RecipeController::class, 'myRecipes']);
         Route::get('/recipes/create', [RecipeController::class, 'create'])->name('recipes.create');
         Route::post('/recipes', [RecipeController::class, 'store'])->name('recipes.store');
         Route::put('/recipes/{id}', [RecipeController::class, 'update'])->name('recipes.update');
@@ -77,6 +78,7 @@ Route::middleware(['auth.sso'])->group(function () {
     Route::get('/bookmarks', [BookmarkController::class, 'index']);
     Route::post('/bookmarks', [BookmarkController::class, 'store']);
     Route::delete('/bookmarks/{recipe_id}', [BookmarkController::class, 'destroy']);
+    Route::post('/bookmarks/toggle/{recipe_id}', [BookmarkController::class, 'toggle']);
 
     // Rating routes
     Route::prefix('recipes/{recipe_id}')->group(function () {

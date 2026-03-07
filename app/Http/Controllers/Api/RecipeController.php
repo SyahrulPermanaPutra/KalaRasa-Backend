@@ -600,4 +600,31 @@ class RecipeController extends Controller
             ]
         ]);
     }
+
+    /**
+     * Tampilkan resep yang dibuat oleh user saat ini
+     */
+    public function myRecipes(Request $request)
+    {
+        $user = $request->get('auth_user') ?? $request->user();
+        
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated'
+            ], 401);
+        }
+
+        $query = Recipe::where('created_by', $user->id)
+            ->with(['creator:id,name'])
+            ->orderBy('created_at', 'desc');
+
+        $recipes = $query->paginate($request->input('per_page', 15));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Daftar resep saya berhasil diambil',
+            'data' => $recipes
+        ]);
+    }
 }
