@@ -448,17 +448,26 @@ class ShoppingListController extends Controller
 
     /**
      * PUT /api/shopping-lists/{id}
-     * Update memo (nama, tanggal, catatan, status)
+     * Update memo (nama, tanggal, catatan, status) dan item terkait (bulk update)
      */
     public function update(Request $request, $id)
     {
         $list = ShoppingList::where('user_id', $request->user()->id)->findOrFail($id);
 
         $validator = Validator::make($request->all(), [
-            'nama_list'     => 'sometimes|string|max:255',
-            'shopping_date' => 'sometimes|date',
-            'catatan'       => 'nullable|string',
-            'status'        => 'sometimes|in:pending,completed,cancelled',
+            'nama_list'               => 'sometimes|string|max:255',
+            'shopping_date'           => 'sometimes|date',
+            'catatan'                 => 'nullable|string',
+            'status'                  => 'sometimes|in:pending,completed,cancelled',
+            'items'                   => 'nullable|array',
+            'items.*.id'              => 'nullable',
+            'items.*.nama_item'       => 'required_with:items|string|max:255',
+            'items.*.jumlah'          => 'required_with:items|numeric|min:0',
+            'items.*.satuan'          => 'required_with:items|string|max:50',
+            'items.*.estimated_price' => 'nullable|numeric|min:0',
+            'items.*.actual_price'    => 'nullable|numeric|min:0',
+            'items.*.is_purchased'    => 'nullable|boolean',
+            'items.*.catatan'         => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -469,13 +478,75 @@ class ShoppingListController extends Controller
             ], 422);
         }
 
-        $list->update($request->only(['nama_list', 'shopping_date', 'catatan', 'status']));
+        DB::beginTransaction();
+        try {
+            // Update metadata list
+            $list->update($request->only(['nama_list', 'shopping_date', 'catatan', 'status']));
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Memo berhasil diupdate',
-            'data'    => $list->load('items'),
-        ]);
+            // Update item belanja jika ada
+            if ($request->has('items')) {
+                $itemIdsInRequest = [];
+
+                foreach ($request->items as $itemData) {
+                    $itemData['actual_price'] = $itemData['actual_price'] ?? 0;
+                    
+                    if (!empty($itemData['id'])) {
+                        // Update item lama
+                        $item = ShoppingListItem::where('shopping_list_id', $list->id)
+                            ->find($itemData['id']);
+                        
+                        if ($item) {
+                            $item->update([
+                                'nama_item'       => $itemData['nama_item'],
+                                'jumlah'          => $itemData['jumlah'],
+                                'satuan'          => $itemData['satuan'],
+                                'estimated_price' => $itemData['estimated_price'] ?? 0,
+                                'actual_price'    => $itemData['actual_price'],
+                                'is_purchased'    => $itemData['is_purchased'] ?? false,
+                                'catatan'         => $itemData['catatan'] ?? null,
+                            ]);
+                            $itemIdsInRequest[] = $item->id;
+                        }
+                    } else {
+                        // Buat item baru
+                        $newItem = ShoppingListItem::create([
+                            'shopping_list_id' => $list->id,
+                            'nama_item'        => $itemData['nama_item'],
+                            'jumlah'           => $itemData['jumlah'],
+                            'satuan'           => $itemData['satuan'],
+                            'estimated_price'  => $itemData['estimated_price'] ?? 0,
+                            'actual_price'     => $itemData['actual_price'],
+                            'is_purchased'     => $itemData['is_purchased'] ?? false,
+                            'catatan'          => $itemData['catatan'] ?? null,
+                        ]);
+                        $itemIdsInRequest[] = $newItem->id;
+                    }
+                }
+
+                // Opsional: Hapus item yang tidak ada di request
+                ShoppingListItem::where('shopping_list_id', $list->id)
+                    ->whereNotIn('id', $itemIdsInRequest)
+                    ->delete();
+            }
+
+            // Recalculate totals
+            $list->recalculateTotals();
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Memo berhasil diupdate',
+                'data'    => $list->load('items'),
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal mengupdate memo: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     /**
