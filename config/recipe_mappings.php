@@ -292,11 +292,4 @@ return [
             'santan' => ['severity' => 'anjuran', 'notes' => 'Alternatif non-dairy yang aman'],
         ],
     ],
-    'aliases' => [
-        'nasi' => 'beras',
-        'ayam goreng' => 'ayam',
-    ],
-    'health_restrictions' => [
-        'diabetes' => ['exclude' => ['gula', 'tepung']],
-    ],
 ];
